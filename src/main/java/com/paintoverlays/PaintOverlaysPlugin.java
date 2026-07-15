@@ -4197,7 +4197,7 @@ public class PaintOverlaysPlugin extends Plugin
     String getInputStatusText()
     {
         PaintInputMode inputMode = getInputMode();
-        String chunkUsage = getCurrentChunkUsageStatus();
+        String chunkUsage = areDebugToolsEnabled() ? getCurrentChunkUsageStatus() : null;
         if (inputMode == PaintInputMode.NONE)
         {
             return chunkUsage == null ? "Off" : "Off | " + chunkUsage;
@@ -4292,7 +4292,7 @@ public class PaintOverlaysPlugin extends Plugin
     private void updateContextState()
     {
         boolean currentWorldMapOpen = isWorldMapWidgetVisible();
-        boolean statusChunkChanged = updateCachedStatusChunkKeys(currentWorldMapOpen);
+        boolean statusChunkChanged = areDebugToolsEnabled() && updateCachedStatusChunkKeys(currentWorldMapOpen);
         if (!isEditingAvailable() && tool != null)
         {
             inputCaptureActive = false;

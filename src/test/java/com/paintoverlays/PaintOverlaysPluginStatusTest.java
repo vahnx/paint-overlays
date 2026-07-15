@@ -1,9 +1,11 @@
 package com.paintoverlays;
 
 import java.awt.Color;
+import java.lang.reflect.Field;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class PaintOverlaysPluginStatusTest
 {
@@ -39,5 +41,61 @@ public class PaintOverlaysPluginStatusTest
         assertEquals(
             "Chunk scene.0.1234 | Brush 1/300 | Shapes 1/100 | Text 1/100",
             PaintOverlaysPlugin.formatChunkUsageStatus("Chunk", "scene.0.1234", chunk, true));
+    }
+
+    @Test
+    public void inputStatusHidesChunkUsageWhenDebugToolsDisabled() throws Exception
+    {
+        String previous = System.getProperty("paintoverlays.debugTools");
+        System.clearProperty("paintoverlays.debugTools");
+        try
+        {
+            PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+            setField(plugin, "cachedSceneStatusChunkKey", "scene.0.1234");
+
+            assertEquals("Off", plugin.getInputStatusText());
+        }
+        finally
+        {
+            restoreDebugProperty(previous);
+        }
+    }
+
+    @Test
+    public void inputStatusIncludesChunkUsageWhenDebugToolsEnabled() throws Exception
+    {
+        String previous = System.getProperty("paintoverlays.debugTools");
+        System.setProperty("paintoverlays.debugTools", "true");
+        try
+        {
+            PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+            setField(plugin, "cachedSceneStatusChunkKey", "scene.0.1234");
+
+            String status = plugin.getInputStatusText();
+            assertTrue(status.startsWith("Off | Chunk scene.0.1234"));
+        }
+        finally
+        {
+            restoreDebugProperty(previous);
+        }
+    }
+
+    private static void setField(Object target, String fieldName, Object value) throws Exception
+    {
+        Field field = PaintOverlaysPlugin.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private static void restoreDebugProperty(String previous)
+    {
+        if (previous == null)
+        {
+            System.clearProperty("paintoverlays.debugTools");
+        }
+        else
+        {
+            System.setProperty("paintoverlays.debugTools", previous);
+        }
     }
 }
