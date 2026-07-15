@@ -65,6 +65,18 @@ final class PaintWorldMapViewState
         return visibleRegionIds;
     }
 
+    int getCenterRegionId()
+    {
+        if (!isAvailable())
+        {
+            return -1;
+        }
+
+        int regionX = center.getX() >> 6;
+        int regionY = center.getY() >> 6;
+        return regionX < 0 || regionY < 0 ? -1 : (regionX << 8) | regionY;
+    }
+
     float getPixelsPerTile()
     {
         return pixelsPerTile;

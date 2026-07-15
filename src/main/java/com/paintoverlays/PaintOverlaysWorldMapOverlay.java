@@ -85,6 +85,11 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         return viewState.getVisibleRegionIds();
     }
 
+    int getCenterRegionId()
+    {
+        return viewState.getCenterRegionId();
+    }
+
     PaintTarget getTarget(int mouseX, int mouseY)
     {
         return viewState.getTarget(mouseX, mouseY);

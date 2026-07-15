@@ -194,15 +194,8 @@ final class PaintMath
             return null;
         }
 
-        int widthInTiles = (int) Math.ceil(bounds.getWidth() / pixelsPerTile);
-        int heightInTiles = (int) Math.ceil(bounds.getHeight() / pixelsPerTile);
-        double adjustment = pixelsPerTile - Math.ceil(pixelsPerTile / 2.0);
-
-        double xGraphDiff = mouseX - bounds.getX();
-        double yGraphDiff = bounds.getHeight() - (mouseY - bounds.getY());
-
-        double worldX = center.getX() - widthInTiles / 2.0 + (xGraphDiff - adjustment) / pixelsPerTile;
-        double worldY = (center.getY() - heightInTiles / 2.0) - 1.0 + (yGraphDiff + adjustment) / pixelsPerTile;
+        double worldX = center.getX() + (mouseX - bounds.getCenterX()) / pixelsPerTile;
+        double worldY = center.getY() - (mouseY - bounds.getCenterY()) / pixelsPerTile;
 
         int tileX = (int) Math.floor(worldX + 0.5);
         int tileY = (int) Math.floor(worldY + 0.5);
@@ -218,19 +211,10 @@ final class PaintMath
             return null;
         }
 
-        int widthInTiles = (int) Math.ceil(bounds.getWidth() / pixelsPerTile);
-        int heightInTiles = (int) Math.ceil(bounds.getHeight() / pixelsPerTile);
-
         double worldContinuousX = continuousCoordinate(worldX, offsetX);
         double worldContinuousY = continuousCoordinate(worldY, offsetY);
-        double adjustment = pixelsPerTile - Math.ceil(pixelsPerTile / 2.0);
-        double yTileMax = center.getY() - heightInTiles / 2.0;
-        double xTileOffset = worldContinuousX + widthInTiles / 2.0 - center.getX();
-        double yTileOffset = (yTileMax - worldContinuousY - 1.0) * -1.0;
-        double xGraphDiff = xTileOffset * pixelsPerTile + adjustment;
-        double yGraphDiff = yTileOffset * pixelsPerTile - adjustment;
-        int screenX = (int) Math.round(bounds.getX() + xGraphDiff);
-        int screenY = (int) Math.round(bounds.getY() + bounds.getHeight() - yGraphDiff);
+        int screenX = (int) Math.round(bounds.getCenterX() + (worldContinuousX - center.getX()) * pixelsPerTile);
+        int screenY = (int) Math.round(bounds.getCenterY() - (worldContinuousY - center.getY()) * pixelsPerTile);
         return new Point(screenX, screenY);
     }
 

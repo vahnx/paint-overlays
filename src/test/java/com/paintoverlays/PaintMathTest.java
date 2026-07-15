@@ -39,7 +39,7 @@ public class PaintMathTest
     {
         Rectangle bounds = new Rectangle(37, 52, 312, 244);
         Point center = new Point(3200, 3200);
-        float[] zoomLevels = new float[] {1.0f, 1.5f, 3.25f, 6.0f};
+        float[] zoomLevels = new float[] {0.65f, 1.0f, 1.5f, 3.25f, 6.0f};
         int[][] mousePoints = new int[][]
         {
             {40, 55},

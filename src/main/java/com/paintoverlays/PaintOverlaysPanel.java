@@ -5,6 +5,8 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
@@ -54,6 +56,9 @@ class PaintOverlaysPanel extends PluginPanel
     private final JLabel hintLabel = new JLabel();
     private final JButton undoButton = new JButton();
     private final JButton clearButton = new JButton();
+    private final JButton drawingTestButton = new JButton("Generate Drawing Test");
+    private final JButton exportDebugButton = new JButton("Export Debug Snapshot");
+    private RuneliteColorPicker activeColorPicker;
     private boolean refreshing;
 
     PaintOverlaysPanel(PaintOverlaysPlugin plugin, ColorPickerManager colorPickerManager)
@@ -107,9 +112,14 @@ class PaintOverlaysPanel extends PluginPanel
         undoButton.setHorizontalAlignment(SwingConstants.LEFT);
         clearButton.addActionListener(e ->
         {
-            if (confirmClear())
+            ClearScope scope = promptClearScope();
+            if (scope == ClearScope.SMALL)
             {
-                plugin.clearVisibleSurface();
+                plugin.clearCurrentSurfaceChunk();
+            }
+            else if (scope == ClearScope.LARGE)
+            {
+                plugin.clearSecondarySurfaceSelection();
             }
         });
         clearButton.setHorizontalAlignment(SwingConstants.LEFT);
@@ -117,6 +127,21 @@ class PaintOverlaysPanel extends PluginPanel
         actionsSection.add(fullWidthRow(undoButton));
         actionsSection.add(fullWidthRow(clearButton));
         content.add(actionsSection);
+
+        drawingTestButton.addActionListener(e ->
+        {
+            if (confirmGenerateDrawingTest())
+            {
+                plugin.generateDrawingTest();
+            }
+        });
+        drawingTestButton.setHorizontalAlignment(SwingConstants.LEFT);
+        exportDebugButton.addActionListener(e -> plugin.exportDebugSnapshot());
+        exportDebugButton.setHorizontalAlignment(SwingConstants.LEFT);
+        JPanel debugSection = sectionPanel("Debug");
+        debugSection.add(fullWidthRow(drawingTestButton));
+        debugSection.add(fullWidthRow(exportDebugButton));
+        content.add(debugSection);
 
         statusLabel.setForeground(Color.WHITE);
         statusLabel.setHorizontalAlignment(SwingConstants.LEFT);
@@ -255,6 +280,9 @@ class PaintOverlaysPanel extends PluginPanel
             undoButton.setText(plugin.getUndoActionText());
             undoButton.setEnabled(plugin.canUndo());
             clearButton.setText(plugin.getClearActionText());
+            clearButton.setEnabled(plugin.canClearSurface());
+            drawingTestButton.setEnabled(plugin.canGenerateDrawingTest());
+            exportDebugButton.setEnabled(true);
             statusLabel.setText(html(plugin.getInputStatusText()));
             hintLabel.setText(buildHintText(plugin));
         }
@@ -281,6 +309,7 @@ class PaintOverlaysPanel extends PluginPanel
                 return;
             }
 
+            closeActiveColorPicker();
             if (plugin.getTool() == tool)
             {
                 plugin.setTool(null);
@@ -437,28 +466,92 @@ class PaintOverlaysPanel extends PluginPanel
 
     private void openColorPicker(String title, Color initialColor, java.util.function.Consumer<Color> consumer)
     {
+        closeActiveColorPicker();
         RuneliteColorPicker picker = colorPickerManager.create(
             this,
             initialColor,
             title,
             false);
+        activeColorPicker = picker;
         picker.setLocationRelativeTo(this);
         picker.setOnColorChange(consumer::accept);
+        picker.addWindowListener(new WindowAdapter()
+        {
+            @Override
+            public void windowClosing(WindowEvent event)
+            {
+                if (activeColorPicker == picker)
+                {
+                    activeColorPicker = null;
+                }
+            }
+
+            @Override
+            public void windowClosed(WindowEvent event)
+            {
+                if (activeColorPicker == picker)
+                {
+                    activeColorPicker = null;
+                }
+            }
+        });
         picker.setVisible(true);
     }
 
-    private boolean confirmClear()
+    private void closeActiveColorPicker()
     {
-        String target = plugin.isWorldMapOpen()
-            ? "the visible world map drawings"
-            : "the nearby in-game area around your player";
-        String detail = plugin.isWorldMapOpen()
-            ? "This clears only the world map regions currently visible on screen."
-            : "This clears a wide 3x3 chunk area around your player, not just the exact screen view.";
+        RuneliteColorPicker picker = activeColorPicker;
+        activeColorPicker = null;
+        if (picker == null)
+        {
+            return;
+        }
+
+        picker.setVisible(false);
+        picker.dispose();
+    }
+
+    private ClearScope promptClearScope()
+    {
+        String message = plugin.isWorldMapOpen()
+            ? "Choose how much map paint to clear:\n\n"
+                + "Small Chunk clears only the current map region under your target or the map center.\n"
+                + "Large Chunks clears the world map regions currently visible on screen."
+            : "Choose how much in-game paint to clear:\n\n"
+                + "Small Chunk clears only the current chunk under your target or player position.\n"
+                + "Large Chunks clears a wide 3x3 chunk area around your player.";
+        String[] options = new String[]
+        {
+            "Small Chunk",
+            "Large Chunks",
+            "Cancel"
+        };
+        int choice = JOptionPane.showOptionDialog(
+            this,
+            message,
+            "Confirm Clear",
+            JOptionPane.DEFAULT_OPTION,
+            JOptionPane.WARNING_MESSAGE,
+            null,
+            options,
+            options[0]);
+        if (choice == 0)
+        {
+            return ClearScope.SMALL;
+        }
+        if (choice == 1)
+        {
+            return ClearScope.LARGE;
+        }
+        return ClearScope.CANCEL;
+    }
+
+    private boolean confirmGenerateDrawingTest()
+    {
         int choice = JOptionPane.showConfirmDialog(
             this,
-            "Are you sure you want to clear " + target + "?\n\n" + detail,
-            "Confirm Clear",
+            "Generate a deterministic scene test pattern in the nearby 3x3 chunk area?\n\nThis clears existing nearby scene paint first so each test run is directly comparable.",
+            "Generate Drawing Test",
             JOptionPane.YES_NO_OPTION,
             JOptionPane.WARNING_MESSAGE);
         return choice == JOptionPane.YES_OPTION;
@@ -568,5 +661,12 @@ class PaintOverlaysPanel extends PluginPanel
     private static String html(String text)
     {
         return "<html><div style='width:100%'>" + text + "</div></html>";
+    }
+
+    private enum ClearScope
+    {
+        SMALL,
+        LARGE,
+        CANCEL
     }
 }
