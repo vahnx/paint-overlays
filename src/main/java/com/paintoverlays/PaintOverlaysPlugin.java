@@ -141,6 +141,7 @@ public class PaintOverlaysPlugin extends Plugin
     private final Map<String, PaintChunkData> mapChunks = new HashMap<>();
     private final Set<String> sceneChunkKeys = new HashSet<>();
     private final Set<String> mapChunkKeys = new HashSet<>();
+    private final Set<String> pendingChunkPersistenceKeys = new HashSet<>();
     private final Deque<PaintUndoAction> undoHistory = new ArrayDeque<>();
 
     private PaintOverlaysPanel panel;
@@ -232,6 +233,7 @@ public class PaintOverlaysPlugin extends Plugin
         mapChunks.clear();
         sceneChunkKeys.clear();
         mapChunkKeys.clear();
+        pendingChunkPersistenceKeys.clear();
 
         activeSceneStroke = null;
         activeMapStroke = null;
@@ -1354,14 +1356,17 @@ public class PaintOverlaysPlugin extends Plugin
             }
 
             int plane = extractSceneChunkPlane(key);
-            String snapshotJson = gson.toJson(chunk);
+            boolean needsSnapshot = !undoAction.hasSnapshot(key);
+            String snapshotJson = needsSnapshot ? gson.toJson(chunk) : null;
             if (eraseSceneFromChunk(chunk, plane, mousePoint.x, mousePoint.y))
             {
-                undoAction.addSnapshot(key, snapshotJson);
-                saveChunk(sceneChunks, sceneChunkKeys, key);
+                if (needsSnapshot)
+                {
+                    undoAction.addSnapshot(key, snapshotJson);
+                }
+                queueChunkPersistence(sceneChunks, sceneChunkKeys, key);
             }
         }
-        refreshPanel();
     }
 
     private void eraseVisibleMap(java.awt.Point mousePoint)
@@ -1376,14 +1381,17 @@ public class PaintOverlaysPlugin extends Plugin
                 continue;
             }
 
-            String snapshotJson = gson.toJson(chunk);
+            boolean needsSnapshot = !undoAction.hasSnapshot(key);
+            String snapshotJson = needsSnapshot ? gson.toJson(chunk) : null;
             if (eraseMapFromChunk(chunk, mousePoint.x, mousePoint.y))
             {
-                undoAction.addSnapshot(key, snapshotJson);
-                saveChunk(mapChunks, mapChunkKeys, key);
+                if (needsSnapshot)
+                {
+                    undoAction.addSnapshot(key, snapshotJson);
+                }
+                queueChunkPersistence(mapChunks, mapChunkKeys, key);
             }
         }
-        refreshPanel();
     }
 
     private boolean eraseSceneFromChunk(PaintChunkData chunk, int plane, int mouseX, int mouseY)
@@ -1673,6 +1681,7 @@ public class PaintOverlaysPlugin extends Plugin
     private void finalizePendingPaintAction()
     {
         finishActiveStrokes();
+        flushQueuedChunkPersistence();
         commitUndoAction(pendingUndoAction);
         refreshPanel();
     }
@@ -1724,6 +1733,45 @@ public class PaintOverlaysPlugin extends Plugin
         chunk.strokes.add(stroke);
         saveChunk(cache, knownKeys, chunkKey);
         return true;
+    }
+
+    private void queueChunkPersistence(Map<String, PaintChunkData> cache, Set<String> knownKeys, String key)
+    {
+        if (key == null)
+        {
+            return;
+        }
+
+        PaintChunkData chunk = cache.get(key);
+        cleanChunk(chunk);
+        if (chunk == null || chunk.isEmpty())
+        {
+            cache.remove(key);
+            knownKeys.remove(key);
+        }
+        else
+        {
+            knownKeys.add(key);
+        }
+
+        pendingChunkPersistenceKeys.add(key);
+    }
+
+    private void flushQueuedChunkPersistence()
+    {
+        if (pendingChunkPersistenceKeys.isEmpty())
+        {
+            return;
+        }
+
+        List<String> pendingKeys = new ArrayList<>(pendingChunkPersistenceKeys);
+        pendingChunkPersistenceKeys.clear();
+        for (String key : pendingKeys)
+        {
+            Map<String, PaintChunkData> cache = key.startsWith(SCENE_PREFIX) ? sceneChunks : mapChunks;
+            Set<String> knownKeys = key.startsWith(SCENE_PREFIX) ? sceneChunkKeys : mapChunkKeys;
+            saveChunk(cache, knownKeys, key);
+        }
     }
 
     private void cleanChunk(PaintChunkData chunk)
@@ -1864,6 +1912,7 @@ public class PaintOverlaysPlugin extends Plugin
         mapChunks.clear();
         sceneChunkKeys.clear();
         mapChunkKeys.clear();
+        pendingChunkPersistenceKeys.clear();
         pendingUndoAction = null;
         undoHistory.clear();
 
@@ -2301,7 +2350,7 @@ public class PaintOverlaysPlugin extends Plugin
     private void updateContextState()
     {
         boolean currentWorldMapOpen = isWorldMapWidgetVisible();
-        updateCachedStatusChunkKeys(currentWorldMapOpen);
+        boolean statusChunkChanged = updateCachedStatusChunkKeys(currentWorldMapOpen);
         if (!isEditingAvailable() && tool != null)
         {
             inputCaptureActive = false;
@@ -2318,16 +2367,26 @@ public class PaintOverlaysPlugin extends Plugin
         }
 
         worldMapOpen = currentWorldMapOpen;
+        if (statusChunkChanged)
+        {
+            refreshPanel();
+        }
     }
 
-    private void updateCachedStatusChunkKeys(boolean currentWorldMapOpen)
+    private boolean updateCachedStatusChunkKeys(boolean currentWorldMapOpen)
     {
+        boolean changed = false;
         if (client.getLocalPlayer() != null)
         {
             WorldPoint location = client.getLocalPlayer().getWorldLocation();
             if (location != null)
             {
-                cachedSceneStatusChunkKey = getSceneChunkKey(location.getPlane(), location.getRegionID());
+                String sceneChunkKey = getSceneChunkKey(location.getPlane(), location.getRegionID());
+                if (!sceneChunkKey.equals(cachedSceneStatusChunkKey))
+                {
+                    cachedSceneStatusChunkKey = sceneChunkKey;
+                    changed = true;
+                }
             }
         }
 
@@ -2336,9 +2395,15 @@ public class PaintOverlaysPlugin extends Plugin
             int centerRegionId = worldMapOverlay.getCenterRegionId();
             if (centerRegionId >= 0)
             {
-                cachedMapStatusChunkKey = getMapChunkKey(centerRegionId);
+                String mapChunkKey = getMapChunkKey(centerRegionId);
+                if (!mapChunkKey.equals(cachedMapStatusChunkKey))
+                {
+                    cachedMapStatusChunkKey = mapChunkKey;
+                    changed = true;
+                }
             }
         }
+        return changed;
     }
 
     private boolean isWorldMapWidgetVisible()
@@ -2399,7 +2464,7 @@ public class PaintOverlaysPlugin extends Plugin
 
         Map<String, PaintChunkData> cache = worldMapOpen ? mapChunks : sceneChunks;
         Set<String> knownKeys = worldMapOpen ? mapChunkKeys : sceneChunkKeys;
-        PaintChunkData chunk = cache.get(chunkKey);
+        PaintChunkData chunk = getOrCreateChunk(cache, knownKeys, chunkKey, false);
         return formatChunkUsageStatus(scopeLabel, displayChunkKey, chunk, knownKeys.contains(chunkKey));
     }
 

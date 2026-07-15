@@ -56,6 +56,14 @@
 - `build.gradle` must target Java 11** and match the structure of the example-plugin template.
 - Retain a permissive license, such as BSD-2.
 
+## Release Safety
+
+- `paintoverlays.debugTools=true` is for local development and testing only.
+- Never prepare, submit, or publish a Plugin Hub release with `paintoverlays.debugTools=true`.
+- If asked to prepare the project for release, release review, publishing, or handoff, first set `paintoverlays.debugTools=false`.
+- If asked to restore local debug/testing behavior, it is acceptable to set `paintoverlays.debugTools=true`, but only for non-release development work.
+- Before presenting a branch as release-ready, verify that `paintoverlays.debugTools=false`.
+
 ## Resources & Assets
 
 - Optimize icon PNGs. Java loads images at full resolution in memory (`width × height × 4` bytes), so a seemingly small file can use significant memory.
