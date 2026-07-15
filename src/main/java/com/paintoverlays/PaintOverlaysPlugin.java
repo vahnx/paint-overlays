@@ -57,6 +57,7 @@ import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -86,6 +87,7 @@ public class PaintOverlaysPlugin extends Plugin
     private static final String COMPRESSED_CHUNK_PREFIX = "gz:";
     private static final String SCENE_PREFIX = "scene.";
     private static final String MAP_PREFIX = "map.";
+    private static final String DEBUG_TOOLS_PROPERTY = "paintoverlays.debugTools";
     private static final int REGION_SIZE = 64;
     private static final int DEFAULT_BRUSH_SIZE = 4;
     private static final int DEFAULT_TEXT_SIZE = 16;
@@ -265,7 +267,17 @@ public class PaintOverlaysPlugin extends Plugin
         if (event.getGameState() == GameState.LOGGED_IN)
         {
             reloadAllChunks();
+            return;
         }
+
+        inputCaptureActive = false;
+        if (tool != null)
+        {
+            setTool(null);
+            return;
+        }
+
+        refreshPanel();
     }
 
     @Subscribe
@@ -382,6 +394,11 @@ public class PaintOverlaysPlugin extends Plugin
 
     void setTool(PaintTool tool)
     {
+        if (tool != null && !isEditingAvailable())
+        {
+            return;
+        }
+
         this.tool = tool;
         inputCaptureActive = false;
         lastSceneSearchTarget = null;
@@ -495,6 +512,16 @@ public class PaintOverlaysPlugin extends Plugin
         return isInLoggedInGame() && worldMapOpen;
     }
 
+    boolean isEditingAvailable()
+    {
+        return isInLoggedInGame();
+    }
+
+    boolean areDebugToolsEnabled()
+    {
+        return Boolean.getBoolean(DEBUG_TOOLS_PROPERTY);
+    }
+
     void clearCurrentSurfaceChunk()
     {
         clientThread.invoke(this::clearCurrentSurfaceChunkOnClientThread);
@@ -517,16 +544,26 @@ public class PaintOverlaysPlugin extends Plugin
 
     boolean canGenerateDrawingTest()
     {
-        return !worldMapOpen;
+        return areDebugToolsEnabled() && isEditingAvailable() && !worldMapOpen;
     }
 
     void generateDrawingTest()
     {
+        if (!areDebugToolsEnabled())
+        {
+            return;
+        }
+
         clientThread.invoke(this::generateDrawingTestOnClientThread);
     }
 
     void exportDebugSnapshot()
     {
+        if (!areDebugToolsEnabled())
+        {
+            return;
+        }
+
         clientThread.invoke(this::exportDebugSnapshotOnClientThread);
     }
 
@@ -733,7 +770,7 @@ public class PaintOverlaysPlugin extends Plugin
         finalizePendingPaintAction();
         flushPersistedChanges();
 
-        File debugDir = new File(System.getProperty("user.home"), "paint-overlays-debug");
+        File debugDir = new File(RuneLite.RUNELITE_DIR, "paint-overlays-debug");
         if (!debugDir.exists() && !debugDir.mkdirs())
         {
             log.warn("Failed to create debug export directory {}", debugDir);
@@ -2168,8 +2205,8 @@ public class PaintOverlaysPlugin extends Plugin
                 if (!isInLoggedInGame())
                 {
                     return chunkUsage == null
-                        ? "World map mode selected | log into the game to paint"
-                        : "World map mode selected | log into the game to paint | " + chunkUsage;
+                        ? "World map mode selected | available after logging in"
+                        : "World map mode selected | available after logging in | " + chunkUsage;
                 }
 
                 return chunkUsage == null
@@ -2180,8 +2217,8 @@ public class PaintOverlaysPlugin extends Plugin
             if (!isInLoggedInGame())
             {
                 return chunkUsage == null
-                    ? "In-Game mode selected | log into the game to paint"
-                    : "In-Game mode selected | log into the game to paint | " + chunkUsage;
+                    ? "In-Game mode selected | available after logging in"
+                    : "In-Game mode selected | available after logging in | " + chunkUsage;
             }
 
             return chunkUsage == null
@@ -2265,6 +2302,13 @@ public class PaintOverlaysPlugin extends Plugin
     {
         boolean currentWorldMapOpen = isWorldMapWidgetVisible();
         updateCachedStatusChunkKeys(currentWorldMapOpen);
+        if (!isEditingAvailable() && tool != null)
+        {
+            inputCaptureActive = false;
+            setTool(null);
+            return;
+        }
+
         if (worldMapOpen != currentWorldMapOpen)
         {
             worldMapOpen = currentWorldMapOpen;
@@ -2320,7 +2364,7 @@ public class PaintOverlaysPlugin extends Plugin
 
     private boolean isInLoggedInGame()
     {
-        return client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null;
+        return client.getGameState() == GameState.LOGGED_IN;
     }
 
     private static int clampTextSize(int textSize)
@@ -2346,23 +2390,38 @@ public class PaintOverlaysPlugin extends Plugin
     private String getCurrentChunkUsageStatus()
     {
         String chunkKey = worldMapOpen ? getStatusMapChunkKey() : getStatusSceneChunkKey();
-        PaintChunkData chunk = chunkKey == null
-            ? null
-            : getOrCreateChunk(worldMapOpen ? mapChunks : sceneChunks, worldMapOpen ? mapChunkKeys : sceneChunkKeys, chunkKey, false);
-        int strokes = countValidStrokes(chunk);
-        int shapes = countValidShapes(chunk);
-        int texts = countValidTexts(chunk);
         String scopeLabel = worldMapOpen ? "Map chunk" : "Chunk";
         String displayChunkKey = chunkKey == null ? "n/a" : chunkKey;
+        if (chunkKey == null)
+        {
+            return formatChunkUsageStatus(scopeLabel, displayChunkKey, null, false);
+        }
+
+        Map<String, PaintChunkData> cache = worldMapOpen ? mapChunks : sceneChunks;
+        Set<String> knownKeys = worldMapOpen ? mapChunkKeys : sceneChunkKeys;
+        PaintChunkData chunk = cache.get(chunkKey);
+        return formatChunkUsageStatus(scopeLabel, displayChunkKey, chunk, knownKeys.contains(chunkKey));
+    }
+
+    static String formatChunkUsageStatus(String scopeLabel, String chunkKey, PaintChunkData chunk, boolean knownChunk)
+    {
         if (chunk == null)
         {
-            return scopeLabel + " " + displayChunkKey
+            if (knownChunk)
+            {
+                return scopeLabel + " " + chunkKey + " | Stored paint";
+            }
+
+            return scopeLabel + " " + chunkKey
                 + " | Brush 0/" + MAX_STROKES_PER_CHUNK
                 + " | Shapes 0/" + MAX_SHAPES_PER_CHUNK
                 + " | Text 0/" + MAX_TEXTS_PER_CHUNK;
         }
 
-        return scopeLabel + " " + displayChunkKey
+        int strokes = countValidStrokes(chunk);
+        int shapes = countValidShapes(chunk);
+        int texts = countValidTexts(chunk);
+        return scopeLabel + " " + chunkKey
             + " | Brush " + formatUsage(strokes, MAX_STROKES_PER_CHUNK)
             + " | Shapes " + formatUsage(shapes, MAX_SHAPES_PER_CHUNK)
             + " | Text " + formatUsage(texts, MAX_TEXTS_PER_CHUNK);

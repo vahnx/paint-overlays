@@ -138,10 +138,13 @@ class PaintOverlaysPanel extends PluginPanel
         drawingTestButton.setHorizontalAlignment(SwingConstants.LEFT);
         exportDebugButton.addActionListener(e -> plugin.exportDebugSnapshot());
         exportDebugButton.setHorizontalAlignment(SwingConstants.LEFT);
-        JPanel debugSection = sectionPanel("Debug");
-        debugSection.add(fullWidthRow(drawingTestButton));
-        debugSection.add(fullWidthRow(exportDebugButton));
-        content.add(debugSection);
+        if (plugin.areDebugToolsEnabled())
+        {
+            JPanel debugSection = sectionPanel("Debug");
+            debugSection.add(fullWidthRow(drawingTestButton));
+            debugSection.add(fullWidthRow(exportDebugButton));
+            content.add(debugSection);
+        }
 
         statusLabel.setForeground(Color.WHITE);
         statusLabel.setHorizontalAlignment(SwingConstants.LEFT);
@@ -265,24 +268,31 @@ class PaintOverlaysPanel extends PluginPanel
             syncButtonColor(frameColorButton, opaque(plugin.getFrameColor()));
             frameRainbowCheck.setSelected(plugin.isFrameRainbowEnabled());
             PaintTool tool = plugin.getTool();
+            boolean editingAvailable = plugin.isEditingAvailable();
             boolean textTool = tool == PaintTool.TEXT;
             boolean shapeTool = tool == PaintTool.SHAPE;
-            boolean sizeEnabled = tool != null;
-            shapeTypeBox.setEnabled(shapeTool);
-            fontBox.setEnabled(textTool);
+            boolean sizeEnabled = editingAvailable && tool != null;
+            brushButton.setEnabled(editingAvailable);
+            shapeButton.setEnabled(editingAvailable);
+            textButton.setEnabled(editingAvailable);
+            eraserButton.setEnabled(editingAvailable);
+            shapeTypeBox.setEnabled(editingAvailable && shapeTool);
+            fontBox.setEnabled(editingAvailable && textTool);
+            frameStyleBox.setEnabled(editingAvailable);
+            frameRainbowCheck.setEnabled(editingAvailable);
             sizeSlider.setEnabled(sizeEnabled);
             sizeField.setEnabled(sizeEnabled);
-            textField.setEnabled(textTool);
-            textBackgroundColorButton.setEnabled(textTool);
-            textBorderColorButton.setEnabled(textTool);
-            colorButton.setEnabled(tool != PaintTool.ERASER);
-            frameColorButton.setEnabled(!plugin.isFrameRainbowEnabled());
+            textField.setEnabled(editingAvailable && textTool);
+            textBackgroundColorButton.setEnabled(editingAvailable && textTool);
+            textBorderColorButton.setEnabled(editingAvailable && textTool);
+            colorButton.setEnabled(editingAvailable && tool != PaintTool.ERASER);
+            frameColorButton.setEnabled(editingAvailable && !plugin.isFrameRainbowEnabled());
             undoButton.setText(plugin.getUndoActionText());
-            undoButton.setEnabled(plugin.canUndo());
+            undoButton.setEnabled(editingAvailable && plugin.canUndo());
             clearButton.setText(plugin.getClearActionText());
-            clearButton.setEnabled(plugin.canClearSurface());
+            clearButton.setEnabled(editingAvailable && plugin.canClearSurface());
             drawingTestButton.setEnabled(plugin.canGenerateDrawingTest());
-            exportDebugButton.setEnabled(true);
+            exportDebugButton.setEnabled(editingAvailable && plugin.areDebugToolsEnabled());
             statusLabel.setText(html(plugin.getInputStatusText()));
             hintLabel.setText(buildHintText(plugin));
         }
@@ -624,6 +634,11 @@ class PaintOverlaysPanel extends PluginPanel
     {
         PaintInputMode mode = plugin.getInputMode();
         PaintTool tool = plugin.getTool();
+        if (!plugin.isEditingAvailable())
+        {
+            return html("Paint tools are available after logging in.");
+        }
+
         if (mode == PaintInputMode.NONE)
         {
             return html("Drawing is off. Select a tool at the very top of this panel to paint. While editing is active, click the same tool again or press ESC to turn drawing off and resume playing.");
