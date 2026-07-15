@@ -631,12 +631,17 @@ class PaintOverlaysPanel extends PluginPanel
 
         if (mode == PaintInputMode.WORLD_MAP && !plugin.isWorldMapInputAvailable())
         {
+            if (!plugin.isSceneInputAvailable())
+            {
+                return html("Paint input is disabled until you are logged into the game.");
+            }
+
             return html("World Map mode only captures input while the world map is open.");
         }
 
         if (mode == PaintInputMode.SCENE && !plugin.isSceneInputAvailable())
         {
-            return html("In-Game mode only captures input while the world map is closed.");
+            return html("In-Game mode only captures input while you are logged into the game and the world map is closed.");
         }
 
         if (tool == PaintTool.SHAPE)

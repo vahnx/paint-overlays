@@ -58,7 +58,11 @@ class PaintOverlaysOverlay extends Overlay
 
         if (plugin.getPluginConfig().showCursorPreview() && plugin.getInputMode() == PaintInputMode.SCENE && plugin.isSceneInputAvailable())
         {
-            renderPreview(graphics, plugin.getScenePreviewTarget(), plugin.getMouseCanvasPosition());
+            PaintTool tool = plugin.getTool();
+            PaintTarget previewTarget = tool == PaintTool.SHAPE || tool == PaintTool.TEXT
+                ? plugin.getScenePreviewTarget()
+                : null;
+            renderPreview(graphics, previewTarget, plugin.getMouseCanvasPosition());
         }
 
         return null;

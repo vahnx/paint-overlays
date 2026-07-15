@@ -4,6 +4,10 @@ import com.google.gson.Gson;
 import java.awt.Color;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.Player;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -67,5 +71,110 @@ public class PaintChunkCapacityTest
         PaintChunkData decoded = (PaintChunkData) deserializeChunk.invoke(plugin, encoded);
         assertEquals(chunk.strokes.size(), decoded.strokes.size());
         assertEquals(chunk.strokes.get(0).points.size(), decoded.strokes.get(0).points.size());
+    }
+
+    @Test
+    public void sceneInputUnavailableAtLoginScreen() throws Exception
+    {
+        PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+        setField(plugin, "client", clientWithState(GameState.LOGIN_SCREEN, null));
+
+        assertTrue(!plugin.isSceneInputAvailable());
+        assertTrue(!plugin.isWorldMapInputAvailable());
+    }
+
+    @Test
+    public void sceneInputRequiresLoggedInPlayer() throws Exception
+    {
+        PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+        Player player = proxy(Player.class);
+        setField(plugin, "client", clientWithState(GameState.LOGGED_IN, player));
+
+        assertTrue(plugin.isSceneInputAvailable());
+    }
+
+    private static void setField(Object target, String fieldName, Object value) throws Exception
+    {
+        Field field = PaintOverlaysPlugin.class.getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private static Client clientWithState(GameState gameState, Player localPlayer)
+    {
+        return (Client) Proxy.newProxyInstance(
+            Client.class.getClassLoader(),
+            new Class<?>[] {Client.class},
+            (proxy, method, args) ->
+            {
+                switch (method.getName())
+                {
+                    case "getGameState":
+                        return gameState;
+                    case "getLocalPlayer":
+                        return localPlayer;
+                    default:
+                        return defaultValue(method.getReturnType());
+                }
+            });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T proxy(Class<T> type)
+    {
+        return (T) Proxy.newProxyInstance(
+            type.getClassLoader(),
+            new Class<?>[] {type},
+            (proxy, method, args) -> defaultValue(method.getReturnType()));
+    }
+
+    private static Object defaultValue(Class<?> returnType)
+    {
+        if (!returnType.isPrimitive())
+        {
+            return null;
+        }
+
+        if (returnType == boolean.class)
+        {
+            return false;
+        }
+
+        if (returnType == byte.class)
+        {
+            return (byte) 0;
+        }
+
+        if (returnType == short.class)
+        {
+            return (short) 0;
+        }
+
+        if (returnType == int.class)
+        {
+            return 0;
+        }
+
+        if (returnType == long.class)
+        {
+            return 0L;
+        }
+
+        if (returnType == float.class)
+        {
+            return 0f;
+        }
+
+        if (returnType == double.class)
+        {
+            return 0d;
+        }
+
+        if (returnType == char.class)
+        {
+            return '\0';
+        }
+
+        return null;
     }
 }

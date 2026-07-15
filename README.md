@@ -32,6 +32,10 @@ Paint in-game scenes or on top of the world map with any color or place text not
 
 ![Example 8](images/po-settings.png)
 
+## Known Bugs
+
+- Elevated walkable surfaces such as the Grand Exchange platform are not reliably paintable yet. Paint targeting there can fail, so those areas are currently unsupported.
+
 ## Support Development
 
 If you find this plugin useful and would like to support its continued development:

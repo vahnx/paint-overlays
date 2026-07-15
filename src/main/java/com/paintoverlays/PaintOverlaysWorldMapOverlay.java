@@ -70,9 +70,13 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         if (plugin.getPluginConfig().showCursorPreview() && plugin.getInputMode() == PaintInputMode.WORLD_MAP)
         {
             Point mouseCanvas = plugin.getMouseCanvasPosition();
+            PaintTool tool = plugin.getTool();
+            PaintTarget previewTarget = tool == PaintTool.SHAPE || tool == PaintTool.TEXT
+                ? currentViewState.getTarget(mouseCanvas.getX(), mouseCanvas.getY())
+                : null;
             renderPreview(
                 graphics,
-                currentViewState.getTarget(mouseCanvas.getX(), mouseCanvas.getY()),
+                previewTarget,
                 mouseCanvas,
                 currentViewState);
         }

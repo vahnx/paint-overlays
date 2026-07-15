@@ -487,12 +487,12 @@ public class PaintOverlaysPlugin extends Plugin
 
     boolean isSceneInputAvailable()
     {
-        return !worldMapOpen;
+        return isInLoggedInGame() && !worldMapOpen;
     }
 
     boolean isWorldMapInputAvailable()
     {
-        return worldMapOpen;
+        return isInLoggedInGame() && worldMapOpen;
     }
 
     void clearCurrentSurfaceChunk()
@@ -2165,9 +2165,23 @@ public class PaintOverlaysPlugin extends Plugin
         {
             if (inputMode == PaintInputMode.WORLD_MAP)
             {
+                if (!isInLoggedInGame())
+                {
+                    return chunkUsage == null
+                        ? "World map mode selected | log into the game to paint"
+                        : "World map mode selected | log into the game to paint | " + chunkUsage;
+                }
+
                 return chunkUsage == null
                     ? "World map mode selected | open the world map to paint"
                     : "World map mode selected | open the world map to paint | " + chunkUsage;
+            }
+
+            if (!isInLoggedInGame())
+            {
+                return chunkUsage == null
+                    ? "In-Game mode selected | log into the game to paint"
+                    : "In-Game mode selected | log into the game to paint | " + chunkUsage;
             }
 
             return chunkUsage == null
@@ -2293,15 +2307,20 @@ public class PaintOverlaysPlugin extends Plugin
     {
         if (mode == PaintInputMode.WORLD_MAP)
         {
-            return worldMapOpen;
+            return isWorldMapInputAvailable();
         }
 
         if (mode == PaintInputMode.SCENE)
         {
-            return !worldMapOpen;
+            return isSceneInputAvailable();
         }
 
         return false;
+    }
+
+    private boolean isInLoggedInGame()
+    {
+        return client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null;
     }
 
     private static int clampTextSize(int textSize)
