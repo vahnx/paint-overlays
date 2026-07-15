@@ -3,8 +3,6 @@ package com.paintoverlays;
 import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.AWTException;
-import java.awt.KeyEventDispatcher;
-import java.awt.KeyboardFocusManager;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
@@ -52,7 +50,6 @@ import java.util.zip.GZIPOutputStream;
 import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
-import javax.swing.text.JTextComponent;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.Constants;
@@ -73,6 +70,7 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.events.RuneScapeProfileChanged;
+import net.runelite.client.input.KeyManager;
 import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -144,6 +142,9 @@ public class PaintOverlaysPlugin extends Plugin
     private MouseManager mouseManager;
 
     @Inject
+    private KeyManager keyManager;
+
+    @Inject
     private Gson gson;
 
     @Inject
@@ -186,7 +187,7 @@ public class PaintOverlaysPlugin extends Plugin
     private long lastHandledPanelToolRequestId;
     private NavigationButton navigationButton;
     private PaintOverlaysMouseListener mouseListener;
-    private KeyEventDispatcher keyEventDispatcher;
+    private PaintOverlaysHotkeyListener hotkeyListener;
     private BufferedImage iconImage;
     private Future<?> debugExportFuture;
 
@@ -281,8 +282,8 @@ public class PaintOverlaysPlugin extends Plugin
 
         mouseListener = new PaintOverlaysMouseListener(this);
         mouseManager.registerMouseListener(mouseListener);
-        keyEventDispatcher = event -> event != null && event.getID() == KeyEvent.KEY_PRESSED && handleKeyPressed(event);
-        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(keyEventDispatcher);
+        hotkeyListener = new PaintOverlaysHotkeyListener(this);
+        keyManager.registerKeyListener(hotkeyListener);
 
         clientThread.invokeLater(() ->
         {
@@ -324,9 +325,9 @@ public class PaintOverlaysPlugin extends Plugin
             debugExportFuture = null;
         }
         mouseManager.unregisterMouseListener(mouseListener);
-        if (keyEventDispatcher != null)
+        if (hotkeyListener != null)
         {
-            KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(keyEventDispatcher);
+            keyManager.unregisterKeyListener(hotkeyListener);
         }
         overlayManager.remove(inputFrameOverlay);
         overlayManager.remove(worldMapOverlay);
@@ -372,7 +373,7 @@ public class PaintOverlaysPlugin extends Plugin
         panel = null;
         navigationButton = null;
         mouseListener = null;
-        keyEventDispatcher = null;
+        hotkeyListener = null;
         iconImage = null;
     }
 
@@ -1553,13 +1554,16 @@ public class PaintOverlaysPlugin extends Plugin
             return false;
         }
 
+        if (event.getComponent() != client.getCanvas())
+        {
+            return false;
+        }
+
         if (event.getKeyCode() == KeyEvent.VK_Z
             && event.isControlDown()
             && !event.isAltDown()
             && !event.isMetaDown()
-            && tool != null
-            && !(KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() instanceof JTextComponent)
-            && KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner() == client.getCanvas())
+            && tool != null)
         {
             undoLastAction();
             return true;
@@ -4517,6 +4521,35 @@ public class PaintOverlaysPlugin extends Plugin
             }
         }
         return count;
+    }
+
+    private static class PaintOverlaysHotkeyListener implements net.runelite.client.input.KeyListener
+    {
+        private final PaintOverlaysPlugin plugin;
+
+        private PaintOverlaysHotkeyListener(PaintOverlaysPlugin plugin)
+        {
+            this.plugin = plugin;
+        }
+
+        @Override
+        public void keyTyped(KeyEvent event)
+        {
+        }
+
+        @Override
+        public void keyPressed(KeyEvent event)
+        {
+            if (plugin.handleKeyPressed(event))
+            {
+                event.consume();
+            }
+        }
+
+        @Override
+        public void keyReleased(KeyEvent event)
+        {
+        }
     }
 
     private static void addDebugFrameStroke(PaintChunkData chunk, int plane, Color color,
