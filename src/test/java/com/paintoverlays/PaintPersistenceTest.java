@@ -76,4 +76,25 @@ public class PaintPersistenceTest
         assertTrue(text.backgroundEnabled);
         assertTrue(text.borderEnabled);
     }
+
+    @Test
+    public void loadedTextUsesAuthoredSanitizationRules()
+    {
+        String source = "A\nB\t" + String.join("", java.util.Collections.nCopies(100, "x")) + "\u0007";
+        PaintChunkData chunk = new PaintChunkData();
+        chunk.texts.add(new PaintText(
+            new PaintTarget(3200, 3200, 0, 64, 64),
+            Color.WHITE,
+            16,
+            PaintFontStyle.RUNE_SCAPE,
+            Color.BLACK,
+            Color.WHITE,
+            source));
+
+        PaintChunkData reloaded = GSON.fromJson(GSON.toJson(chunk), PaintChunkData.class);
+        reloaded.normalizeLoadedState();
+
+        assertEquals(PaintMath.sanitizePendingText(source), reloaded.texts.get(0).text);
+        assertEquals(PaintMath.MAX_TEXT_LENGTH, reloaded.texts.get(0).text.length());
+    }
 }

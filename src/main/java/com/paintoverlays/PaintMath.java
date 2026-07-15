@@ -1,19 +1,24 @@
 package com.paintoverlays;
 
+import java.awt.BasicStroke;
 import java.awt.Font;
 import java.awt.Rectangle;
 import java.awt.font.GlyphVector;
 import java.awt.font.FontRenderContext;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.Shape;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.runelite.api.Point;
 
 final class PaintMath
 {
     static final int MAX_TEXT_LENGTH = 80;
     private static final FontRenderContext FONT_RENDER_CONTEXT = new FontRenderContext(null, true, true);
+    private static final Map<Integer, BasicStroke> ROUND_STROKES = new ConcurrentHashMap<>();
 
     private PaintMath()
     {
@@ -27,6 +32,13 @@ final class PaintMath
     static int cursorRadius(int brushSize)
     {
         return Math.max(2, brushSize);
+    }
+
+    static BasicStroke roundStroke(int width)
+    {
+        int safeWidth = Math.max(1, width);
+        return ROUND_STROKES.computeIfAbsent(safeWidth,
+            value -> new BasicStroke(value, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
     }
 
     static boolean withinCanvasRadius(Point canvasPoint, int mouseX, int mouseY, int radius)
@@ -49,29 +61,77 @@ final class PaintMath
             return false;
         }
 
-        long dx = (long) end.getX() - start.getX();
-        long dy = (long) end.getY() - start.getY();
-        if (dx == 0L && dy == 0L)
+        return pointToSegmentDistanceSquared(
+            mouseX,
+            mouseY,
+            start.getX(),
+            start.getY(),
+            end.getX(),
+            end.getY()) <= radius * (double) radius;
+    }
+
+    static boolean pointWithinCanvasSweep(
+        Point point,
+        int cursorStartX,
+        int cursorStartY,
+        int cursorEndX,
+        int cursorEndY,
+        int radius)
+    {
+        if (point == null)
         {
-            return withinCanvasRadius(start, mouseX, mouseY, radius);
+            return false;
         }
 
-        double t = ((mouseX - start.getX()) * (double) dx + (mouseY - start.getY()) * (double) dy)
-            / (dx * (double) dx + dy * (double) dy);
-        if (t < 0.0)
+        return pointToSegmentDistanceSquared(
+            point.getX(),
+            point.getY(),
+            cursorStartX,
+            cursorStartY,
+            cursorEndX,
+            cursorEndY) <= radius * (double) radius;
+    }
+
+    static boolean segmentsWithinCanvasRadius(
+        Point firstStart,
+        Point firstEnd,
+        int secondStartX,
+        int secondStartY,
+        int secondEndX,
+        int secondEndY,
+        int radius)
+    {
+        if (firstStart == null || firstEnd == null)
         {
-            t = 0.0;
-        }
-        else if (t > 1.0)
-        {
-            t = 1.0;
+            return false;
         }
 
-        double closestX = start.getX() + dx * t;
-        double closestY = start.getY() + dy * t;
-        double diffX = closestX - mouseX;
-        double diffY = closestY - mouseY;
-        return diffX * diffX + diffY * diffY <= radius * (double) radius;
+        int firstStartX = firstStart.getX();
+        int firstStartY = firstStart.getY();
+        int firstEndX = firstEnd.getX();
+        int firstEndY = firstEnd.getY();
+        if (Line2D.linesIntersect(
+            firstStartX,
+            firstStartY,
+            firstEndX,
+            firstEndY,
+            secondStartX,
+            secondStartY,
+            secondEndX,
+            secondEndY))
+        {
+            return true;
+        }
+
+        double limit = radius * (double) radius;
+        return pointToSegmentDistanceSquared(firstStartX, firstStartY,
+            secondStartX, secondStartY, secondEndX, secondEndY) <= limit
+            || pointToSegmentDistanceSquared(firstEndX, firstEndY,
+                secondStartX, secondStartY, secondEndX, secondEndY) <= limit
+            || pointToSegmentDistanceSquared(secondStartX, secondStartY,
+                firstStartX, firstStartY, firstEndX, firstEndY) <= limit
+            || pointToSegmentDistanceSquared(secondEndX, secondEndY,
+                firstStartX, firstStartY, firstEndX, firstEndY) <= limit;
     }
 
     static boolean textWithinCanvasRadius(Point baselinePoint, Font font, String text, int mouseX, int mouseY, int radius)
@@ -87,6 +147,65 @@ final class PaintMath
         double diffX = closestX - mouseX;
         double diffY = closestY - mouseY;
         return diffX * diffX + diffY * diffY <= radius * (double) radius;
+    }
+
+    static boolean textWithinCanvasSweep(
+        Point baselinePoint,
+        Font font,
+        String text,
+        int cursorStartX,
+        int cursorStartY,
+        int cursorEndX,
+        int cursorEndY,
+        int radius)
+    {
+        return rectangleWithinCanvasSweep(
+            textBounds(baselinePoint, font, text),
+            cursorStartX,
+            cursorStartY,
+            cursorEndX,
+            cursorEndY,
+            radius);
+    }
+
+    static boolean rectangleWithinCanvasSweep(
+        Rectangle2D bounds,
+        int cursorStartX,
+        int cursorStartY,
+        int cursorEndX,
+        int cursorEndY,
+        int radius)
+    {
+        if (bounds == null)
+        {
+            return false;
+        }
+
+        double minX = bounds.getMinX();
+        double minY = bounds.getMinY();
+        double maxX = bounds.getMaxX();
+        double maxY = bounds.getMaxY();
+        if (bounds.contains(cursorStartX, cursorStartY)
+            || bounds.contains(cursorEndX, cursorEndY)
+            || Line2D.linesIntersect(cursorStartX, cursorStartY, cursorEndX, cursorEndY, minX, minY, maxX, minY)
+            || Line2D.linesIntersect(cursorStartX, cursorStartY, cursorEndX, cursorEndY, maxX, minY, maxX, maxY)
+            || Line2D.linesIntersect(cursorStartX, cursorStartY, cursorEndX, cursorEndY, maxX, maxY, minX, maxY)
+            || Line2D.linesIntersect(cursorStartX, cursorStartY, cursorEndX, cursorEndY, minX, maxY, minX, minY))
+        {
+            return true;
+        }
+
+        double limit = radius * (double) radius;
+        return pointToRectangleDistanceSquared(cursorStartX, cursorStartY, bounds) <= limit
+            || pointToRectangleDistanceSquared(cursorEndX, cursorEndY, bounds) <= limit
+            || pointToSegmentDistanceSquared(minX, minY,
+                cursorStartX, cursorStartY, cursorEndX, cursorEndY) <= limit
+            || pointToSegmentDistanceSquared(maxX, minY,
+                cursorStartX, cursorStartY, cursorEndX, cursorEndY) <= limit
+            || pointToSegmentDistanceSquared(maxX, maxY,
+                cursorStartX, cursorStartY, cursorEndX, cursorEndY) <= limit
+            || pointToSegmentDistanceSquared(minX, maxY,
+                cursorStartX, cursorStartY, cursorEndX, cursorEndY) <= limit;
     }
 
     static Rectangle2D textBounds(Point baselinePoint, Font font, String text)
@@ -176,7 +295,20 @@ final class PaintMath
                 current = ' ';
             }
 
-            if (Character.isISOControl(current))
+            if (Character.isHighSurrogate(current))
+            {
+                if (i + 1 >= text.length() || !Character.isLowSurrogate(text.charAt(i + 1))
+                    || builder.length() + 2 > MAX_TEXT_LENGTH)
+                {
+                    continue;
+                }
+
+                builder.append(current);
+                builder.append(text.charAt(++i));
+                continue;
+            }
+
+            if (Character.isLowSurrogate(current) || Character.isISOControl(current))
             {
                 continue;
             }
@@ -229,6 +361,41 @@ final class PaintMath
             return max;
         }
         return value;
+    }
+
+    private static double pointToSegmentDistanceSquared(
+        double pointX,
+        double pointY,
+        double startX,
+        double startY,
+        double endX,
+        double endY)
+    {
+        double dx = endX - startX;
+        double dy = endY - startY;
+        if (dx == 0.0 && dy == 0.0)
+        {
+            double pointDx = pointX - startX;
+            double pointDy = pointY - startY;
+            return pointDx * pointDx + pointDy * pointDy;
+        }
+
+        double progress = ((pointX - startX) * dx + (pointY - startY) * dy) / (dx * dx + dy * dy);
+        progress = clamp(progress, 0.0, 1.0);
+        double closestX = startX + dx * progress;
+        double closestY = startY + dy * progress;
+        double pointDx = pointX - closestX;
+        double pointDy = pointY - closestY;
+        return pointDx * pointDx + pointDy * pointDy;
+    }
+
+    private static double pointToRectangleDistanceSquared(double pointX, double pointY, Rectangle2D bounds)
+    {
+        double closestX = clamp(pointX, bounds.getMinX(), bounds.getMaxX());
+        double closestY = clamp(pointY, bounds.getMinY(), bounds.getMaxY());
+        double dx = pointX - closestX;
+        double dy = pointY - closestY;
+        return dx * dx + dy * dy;
     }
 
     private static Shape buildX(double left, double top, double right, double bottom)

@@ -3,7 +3,11 @@ package com.paintoverlays;
 import java.awt.Color;
 import java.awt.Font;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.client.ui.FontManager;
 
@@ -53,7 +57,7 @@ enum PaintFontStyle
     RUNE_SCAPE("RuneScape")
         {
             @Override
-            Font createFont(int size)
+            Font createUncachedFont(int size)
             {
                 return FontManager.getRunescapeFont().deriveFont((float) size);
             }
@@ -61,7 +65,7 @@ enum PaintFontStyle
     RUNE_SCAPE_BOLD("RuneScape Bold")
         {
             @Override
-            Font createFont(int size)
+            Font createUncachedFont(int size)
             {
                 return FontManager.getRunescapeBoldFont().deriveFont((float) size);
             }
@@ -69,25 +73,129 @@ enum PaintFontStyle
     RUNE_SCAPE_SMALL("RuneScape Small")
         {
             @Override
-            Font createFont(int size)
+            Font createUncachedFont(int size)
             {
                 return FontManager.getRunescapeSmallFont().deriveFont((float) size);
             }
         };
 
+    private static final int MAX_CACHED_FONT_SIZES = 128;
     private final String displayName;
+    private final Map<Integer, Font> fontCache = new LinkedHashMap<Integer, Font>(16, 0.75f, true)
+    {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<Integer, Font> eldest)
+        {
+            return size() > MAX_CACHED_FONT_SIZES;
+        }
+    };
 
     PaintFontStyle(String displayName)
     {
         this.displayName = displayName;
     }
 
-    abstract Font createFont(int size);
+    Font createFont(int size)
+    {
+        int safeSize = Math.max(1, size);
+        synchronized (fontCache)
+        {
+            Font cached = fontCache.get(safeSize);
+            if (cached == null)
+            {
+                cached = createUncachedFont(safeSize);
+                fontCache.put(safeSize, cached);
+            }
+            return cached;
+        }
+    }
+
+    abstract Font createUncachedFont(int size);
 
     @Override
     public String toString()
     {
         return displayName;
+    }
+}
+
+final class PaintPanelState
+{
+    final long handledPanelToolRequestId;
+    final PaintTool tool;
+    final PaintInputMode inputMode;
+    final PaintShapeType shapeType;
+    final PaintFontStyle fontStyle;
+    final PaintFrameStyle frameStyle;
+    final Color color;
+    final Color textBackgroundColor;
+    final Color textBorderColor;
+    final Color frameColor;
+    final int brushSize;
+    final int shapeSize;
+    final int textSize;
+    final String pendingText;
+    final boolean frameRainbowEnabled;
+    final boolean editingAvailable;
+    final boolean sceneInputAvailable;
+    final boolean worldMapInputAvailable;
+    final boolean undoAvailable;
+    final boolean clearAvailable;
+    final boolean drawingTestAvailable;
+    final boolean debugToolsEnabled;
+    final String clearActionText;
+    final String inputStatusText;
+
+    PaintPanelState(
+        long handledPanelToolRequestId,
+        PaintTool tool,
+        PaintInputMode inputMode,
+        PaintShapeType shapeType,
+        PaintFontStyle fontStyle,
+        PaintFrameStyle frameStyle,
+        Color color,
+        Color textBackgroundColor,
+        Color textBorderColor,
+        Color frameColor,
+        int brushSize,
+        int shapeSize,
+        int textSize,
+        String pendingText,
+        boolean frameRainbowEnabled,
+        boolean editingAvailable,
+        boolean sceneInputAvailable,
+        boolean worldMapInputAvailable,
+        boolean undoAvailable,
+        boolean clearAvailable,
+        boolean drawingTestAvailable,
+        boolean debugToolsEnabled,
+        String clearActionText,
+        String inputStatusText)
+    {
+        this.handledPanelToolRequestId = handledPanelToolRequestId;
+        this.tool = tool;
+        this.inputMode = inputMode;
+        this.shapeType = shapeType;
+        this.fontStyle = fontStyle;
+        this.frameStyle = frameStyle;
+        this.color = color;
+        this.textBackgroundColor = textBackgroundColor;
+        this.textBorderColor = textBorderColor;
+        this.frameColor = frameColor;
+        this.brushSize = brushSize;
+        this.shapeSize = shapeSize;
+        this.textSize = textSize;
+        this.pendingText = pendingText;
+        this.frameRainbowEnabled = frameRainbowEnabled;
+        this.editingAvailable = editingAvailable;
+        this.sceneInputAvailable = sceneInputAvailable;
+        this.worldMapInputAvailable = worldMapInputAvailable;
+        this.undoAvailable = undoAvailable;
+        this.clearAvailable = clearAvailable;
+        this.drawingTestAvailable = drawingTestAvailable;
+        this.debugToolsEnabled = debugToolsEnabled;
+        this.clearActionText = clearActionText;
+        this.inputStatusText = inputStatusText;
     }
 }
 
@@ -184,6 +292,7 @@ final class PaintPoint
     int worldY;
     int offsetX;
     int offsetY;
+    Boolean startsNewSegment;
 
     PaintPoint()
     {
@@ -206,6 +315,11 @@ final class PaintPoint
     {
         return PaintMath.continuousCoordinate(worldY, offsetY);
     }
+
+    boolean startsNewSegment()
+    {
+        return Boolean.TRUE.equals(startsNewSegment);
+    }
 }
 
 final class PaintStroke
@@ -214,6 +328,7 @@ final class PaintStroke
     int colorArgb;
     int width;
     List<PaintPoint> points = new ArrayList<>();
+    private transient Color cachedColor;
 
     PaintStroke()
     {
@@ -224,6 +339,15 @@ final class PaintStroke
         this.plane = plane;
         this.colorArgb = color.getRGB();
         this.width = width;
+    }
+
+    Color getColor()
+    {
+        if (cachedColor == null || cachedColor.getRGB() != colorArgb)
+        {
+            cachedColor = new Color(colorArgb, true);
+        }
+        return cachedColor;
     }
 }
 
@@ -243,6 +367,10 @@ final class PaintText
     boolean borderEnabled;
     int borderColorArgb;
     String text;
+    private transient Color cachedColor;
+    private transient Color cachedBackgroundColor;
+    private transient Color cachedBorderColor;
+    private transient Color cachedShadowColor;
 
     PaintText()
     {
@@ -294,6 +422,36 @@ final class PaintText
         borderEnabled = borderColor.getAlpha() > 0;
     }
 
+    Color getColor()
+    {
+        cachedColor = cachedColor(cachedColor, colorArgb);
+        return cachedColor;
+    }
+
+    Color getBackgroundColor()
+    {
+        cachedBackgroundColor = cachedColor(cachedBackgroundColor, backgroundColorArgb);
+        return cachedBackgroundColor;
+    }
+
+    Color getBorderColor()
+    {
+        cachedBorderColor = cachedColor(cachedBorderColor, borderColorArgb);
+        return cachedBorderColor;
+    }
+
+    Color getShadowColor()
+    {
+        int shadowArgb = colorArgb & 0xFF000000;
+        cachedShadowColor = cachedColor(cachedShadowColor, shadowArgb);
+        return cachedShadowColor;
+    }
+
+    private static Color cachedColor(Color cached, int argb)
+    {
+        return cached == null || cached.getRGB() != argb ? new Color(argb, true) : cached;
+    }
+
     double getContinuousX()
     {
         return PaintMath.continuousCoordinate(worldX, offsetX);
@@ -315,6 +473,7 @@ final class PaintShape
     int colorArgb;
     int size;
     PaintShapeType shapeType;
+    private transient Color cachedColor;
 
     PaintShape()
     {
@@ -331,6 +490,15 @@ final class PaintShape
         this.size = size;
         this.shapeType = shapeType;
     }
+
+    Color getColor()
+    {
+        if (cachedColor == null || cachedColor.getRGB() != colorArgb)
+        {
+            cachedColor = new Color(colorArgb, true);
+        }
+        return cachedColor;
+    }
 }
 
 final class PaintChunkData
@@ -341,15 +509,54 @@ final class PaintChunkData
 
     void normalizeLoadedState()
     {
+        if (strokes == null)
+        {
+            strokes = new ArrayList<>();
+        }
+        if (shapes == null)
+        {
+            shapes = new ArrayList<>();
+        }
         if (texts == null)
         {
-            return;
+            texts = new ArrayList<>();
         }
+
+        List<PaintStroke> compactedStrokes = new ArrayList<>(strokes.size());
+        PaintStroke previous = null;
+        for (PaintStroke stroke : strokes)
+        {
+            if (stroke == null || stroke.points == null)
+            {
+                continue;
+            }
+
+            stroke.points.removeIf(point -> point == null);
+            if (stroke.points.isEmpty())
+            {
+                continue;
+            }
+
+            if (previous != null
+                && previous.plane == stroke.plane
+                && previous.colorArgb == stroke.colorArgb
+                && previous.width == stroke.width)
+            {
+                stroke.points.get(0).startsNewSegment = true;
+                previous.points.addAll(stroke.points);
+                continue;
+            }
+
+            compactedStrokes.add(stroke);
+            previous = stroke;
+        }
+        strokes = compactedStrokes;
 
         for (PaintText text : texts)
         {
             if (text != null)
             {
+                text.text = PaintMath.sanitizePendingText(text.text);
                 text.normalizeLegacyDecorationState();
             }
         }
@@ -364,12 +571,14 @@ final class PaintChunkData
 final class PaintUndoChunkSnapshot
 {
     final String key;
-    final String json;
+    final String payload;
+    final boolean rawPayload;
 
-    PaintUndoChunkSnapshot(String key, String json)
+    PaintUndoChunkSnapshot(String key, String payload, boolean rawPayload)
     {
         this.key = key;
-        this.json = json;
+        this.payload = payload;
+        this.rawPayload = rawPayload;
     }
 }
 
@@ -377,6 +586,7 @@ final class PaintUndoAction
 {
     final String rsProfileKey;
     final List<PaintUndoChunkSnapshot> snapshots = new ArrayList<>();
+    private final Set<String> snapshotKeys = new HashSet<>();
 
     PaintUndoAction(String rsProfileKey)
     {
@@ -385,24 +595,33 @@ final class PaintUndoAction
 
     boolean hasSnapshot(String key)
     {
-        for (PaintUndoChunkSnapshot snapshot : snapshots)
-        {
-            if (snapshot != null && key.equals(snapshot.key))
-            {
-                return true;
-            }
-        }
-        return false;
+        return key != null && snapshotKeys.contains(key);
     }
 
-    void addSnapshot(String key, String json)
+    void addSnapshot(String key, String payload)
+    {
+        addSnapshot(key, payload, false);
+    }
+
+    void addSnapshot(String key, String payload, boolean rawPayload)
     {
         if (key == null || hasSnapshot(key))
         {
             return;
         }
 
-        snapshots.add(new PaintUndoChunkSnapshot(key, json));
+        snapshotKeys.add(key);
+        snapshots.add(new PaintUndoChunkSnapshot(key, payload, rawPayload));
+    }
+
+    void removeSnapshot(String key)
+    {
+        if (key == null || !snapshotKeys.remove(key))
+        {
+            return;
+        }
+
+        snapshots.removeIf(snapshot -> key.equals(snapshot.key));
     }
 
     boolean isEmpty()

@@ -12,6 +12,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class PaintMathTest
@@ -32,6 +33,17 @@ public class PaintMathTest
         assertTrue(sanitized.startsWith("Line one Line "));
         assertTrue(!sanitized.contains("\n"));
         assertTrue(!sanitized.contains("\t"));
+    }
+
+    @Test
+    public void sanitizePendingTextDoesNotSplitSurrogatePairs()
+    {
+        String input = String.join("", java.util.Collections.nCopies(PaintMath.MAX_TEXT_LENGTH - 1, "x")) + "\uD83D\uDE00";
+
+        String sanitized = PaintMath.sanitizePendingText(input);
+
+        assertEquals(PaintMath.MAX_TEXT_LENGTH - 1, sanitized.length());
+        assertTrue(!Character.isSurrogate(sanitized.charAt(sanitized.length() - 1)));
     }
 
     @Test
@@ -89,6 +101,13 @@ public class PaintMathTest
     }
 
     @Test
+    public void roundStrokeReusesImmutableStrokeByWidth()
+    {
+        assertSame(PaintMath.roundStroke(4), PaintMath.roundStroke(4));
+        assertEquals(1.0f, PaintMath.roundStroke(0).getLineWidth(), 0.0f);
+    }
+
+    @Test
     public void segmentWithinCanvasRadiusHitsMidpoint()
     {
         assertTrue(PaintMath.segmentWithinCanvasRadius(new Point(10, 10), new Point(30, 10), 20, 14, 4));
@@ -98,6 +117,41 @@ public class PaintMathTest
     public void segmentWithinCanvasRadiusRejectsDistantPoint()
     {
         assertTrue(!PaintMath.segmentWithinCanvasRadius(new Point(10, 10), new Point(30, 10), 20, 20, 4));
+    }
+
+    @Test
+    public void cursorSweepIntersectsCrossingStrokeSegment()
+    {
+        assertTrue(PaintMath.segmentsWithinCanvasRadius(
+            new Point(10, 20),
+            new Point(30, 20),
+            20,
+            0,
+            20,
+            40,
+            1));
+    }
+
+    @Test
+    public void cursorSweepRejectsDistantStrokeSegment()
+    {
+        assertTrue(!PaintMath.segmentsWithinCanvasRadius(
+            new Point(10, 20),
+            new Point(30, 20),
+            20,
+            40,
+            20,
+            60,
+            3));
+    }
+
+    @Test
+    public void cursorSweepHitsExpandedRectangle()
+    {
+        Rectangle2D bounds = new Rectangle2D.Double(20, 20, 20, 20);
+
+        assertTrue(PaintMath.rectangleWithinCanvasSweep(bounds, 0, 15, 60, 15, 5));
+        assertTrue(!PaintMath.rectangleWithinCanvasSweep(bounds, 0, 10, 60, 10, 5));
     }
 
     @Test

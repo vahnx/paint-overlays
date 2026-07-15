@@ -6,6 +6,7 @@ import java.awt.geom.Area;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Objects;
 import java.util.Set;
 import net.runelite.api.Point;
 
@@ -19,6 +20,7 @@ final class PaintWorldMapViewState
     private final float pixelsPerTile;
     private final Point center;
     private final Set<Integer> visibleRegionIds;
+    private final Shape clipArea;
 
     private PaintWorldMapViewState(Rectangle bounds, Rectangle overviewBounds, Rectangle surfaceSelectorBounds, float pixelsPerTile, Point center, Set<Integer> visibleRegionIds)
     {
@@ -28,6 +30,7 @@ final class PaintWorldMapViewState
         this.pixelsPerTile = pixelsPerTile;
         this.center = center;
         this.visibleRegionIds = visibleRegionIds;
+        this.clipArea = buildClipArea(bounds, overviewBounds, surfaceSelectorBounds);
     }
 
     static PaintWorldMapViewState unavailable()
@@ -58,6 +61,21 @@ final class PaintWorldMapViewState
     boolean isAvailable()
     {
         return bounds != null && center != null && pixelsPerTile > 0;
+    }
+
+    boolean matches(Rectangle bounds, Rectangle overviewBounds, Rectangle surfaceSelectorBounds, float pixelsPerTile, Point center)
+    {
+        if (!isAvailable() || bounds == null || center == null)
+        {
+            return false;
+        }
+
+        return this.bounds.equals(bounds)
+            && Objects.equals(this.overviewBounds, overviewBounds)
+            && Objects.equals(this.surfaceSelectorBounds, surfaceSelectorBounds)
+            && Float.compare(this.pixelsPerTile, pixelsPerTile) == 0
+            && this.center.getX() == center.getX()
+            && this.center.getY() == center.getY();
     }
 
     Collection<Integer> getVisibleRegionIds()
@@ -97,6 +115,46 @@ final class PaintWorldMapViewState
         return surfaceSelectorBounds == null || !surfaceSelectorBounds.contains(mouseX, mouseY);
     }
 
+    boolean canSweepBetweenCanvasPoints(int startX, int startY, int endX, int endY)
+    {
+        return containsCanvasPoint(startX, startY)
+            && containsCanvasPoint(endX, endY)
+            && (overviewBounds == null || !overviewBounds.intersectsLine(startX, startY, endX, endY))
+            && (surfaceSelectorBounds == null || !surfaceSelectorBounds.intersectsLine(startX, startY, endX, endY));
+    }
+
+    boolean canEraseBetweenCanvasPoints(int startX, int startY, int endX, int endY, int radius)
+    {
+        if (!containsCanvasPoint(startX, startY) || !containsCanvasPoint(endX, endY))
+        {
+            return false;
+        }
+
+        int safeRadius = Math.max(0, radius);
+        return !expandedRectangleIntersectsLine(overviewBounds, safeRadius, startX, startY, endX, endY)
+            && !expandedRectangleIntersectsLine(surfaceSelectorBounds, safeRadius, startX, startY, endX, endY);
+    }
+
+    private static boolean expandedRectangleIntersectsLine(
+        Rectangle rectangle,
+        int radius,
+        int startX,
+        int startY,
+        int endX,
+        int endY)
+    {
+        if (rectangle == null)
+        {
+            return false;
+        }
+
+        Rectangle expanded = new Rectangle(rectangle);
+        expanded.grow(radius, radius);
+        return expanded.contains(startX, startY)
+            || expanded.contains(endX, endY)
+            || expanded.intersectsLine(startX, startY, endX, endY);
+    }
+
     PaintTarget getTarget(int mouseX, int mouseY)
     {
         if (!containsCanvasPoint(mouseX, mouseY))
@@ -119,26 +177,31 @@ final class PaintWorldMapViewState
 
     Shape getClipArea()
     {
-        if (!isAvailable())
+        return clipArea;
+    }
+
+    private static Shape buildClipArea(Rectangle bounds, Rectangle overviewBounds, Rectangle surfaceSelectorBounds)
+    {
+        if (bounds == null)
         {
             return null;
         }
 
-        Area clipArea = new Area(bounds);
+        Area result = new Area(bounds);
         boolean subtracted = false;
         if (overviewBounds != null)
         {
-            clipArea.subtract(new Area(overviewBounds));
+            result.subtract(new Area(overviewBounds));
             subtracted = true;
         }
 
         if (surfaceSelectorBounds != null)
         {
-            clipArea.subtract(new Area(surfaceSelectorBounds));
+            result.subtract(new Area(surfaceSelectorBounds));
             subtracted = true;
         }
 
-        return subtracted ? clipArea : new Rectangle(bounds);
+        return subtracted ? result : new Rectangle(bounds);
     }
 
     private static Set<Integer> computeVisibleRegionIds(Rectangle bounds, float pixelsPerTile, Point center)
