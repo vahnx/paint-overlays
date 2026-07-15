@@ -5,6 +5,8 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.GridLayout;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import javax.swing.BorderFactory;
@@ -60,8 +62,11 @@ class PaintOverlaysPanel extends PluginPanel
     private final JButton exportDebugButton = new JButton("Export Debug Snapshot");
     private RuneliteColorPicker activeColorPicker;
     private boolean refreshing;
+    private PaintTool displayedTool;
+    private boolean toolRequestPending;
+    private long pendingToolRequestId;
 
-    PaintOverlaysPanel(PaintOverlaysPlugin plugin, ColorPickerManager colorPickerManager)
+    PaintOverlaysPanel(PaintOverlaysPlugin plugin, ColorPickerManager colorPickerManager, PaintPanelState initialState)
     {
         this.plugin = plugin;
         this.colorPickerManager = colorPickerManager;
@@ -87,7 +92,7 @@ class PaintOverlaysPanel extends PluginPanel
             "Paint Mode Frame",
             plugin.getFrameColor(),
             plugin::setFrameColor)));
-        JPanel drawingSection = sectionPanel("Drawing");
+        JPanel drawingSection = sectionPanel("Drawing Tools");
         drawingSection.add(fullWidthRow(toolButtonRow()));
         drawingSection.add(row("Color", colorButton));
         drawingSection.add(row("Size", sharedSizeRow()));
@@ -112,7 +117,17 @@ class PaintOverlaysPanel extends PluginPanel
         undoButton.setHorizontalAlignment(SwingConstants.LEFT);
         clearButton.addActionListener(e ->
         {
-            ClearScope scope = promptClearScope();
+            plugin.beginClearPreview();
+            ClearScope scope;
+            try
+            {
+                scope = promptClearScope();
+            }
+            finally
+            {
+                plugin.endClearPreview();
+            }
+
             if (scope == ClearScope.SMALL)
             {
                 plugin.clearCurrentSurfaceChunk();
@@ -200,19 +215,19 @@ class PaintOverlaysPanel extends PluginPanel
             @Override
             public void insertUpdate(DocumentEvent e)
             {
-                plugin.setPendingText(textField.getText());
+                updatePendingText();
             }
 
             @Override
             public void removeUpdate(DocumentEvent e)
             {
-                plugin.setPendingText(textField.getText());
+                updatePendingText();
             }
 
             @Override
             public void changedUpdate(DocumentEvent e)
             {
-                plugin.setPendingText(textField.getText());
+                updatePendingText();
             }
         });
         sizeField.getDocument().addDocumentListener(new DocumentListener()
@@ -236,42 +251,70 @@ class PaintOverlaysPanel extends PluginPanel
             }
         });
 
-        refreshState();
+        FocusAdapter reconcileEditedField = new FocusAdapter()
+        {
+            @Override
+            public void focusLost(FocusEvent event)
+            {
+                plugin.requestPanelRefresh();
+            }
+        };
+        sizeField.addFocusListener(reconcileEditedField);
+        textField.addFocusListener(reconcileEditedField);
+
+        refreshState(initialState);
     }
 
-    void refreshState()
+    void refreshState(PaintPanelState state)
     {
+        if (state == null)
+        {
+            return;
+        }
+
         refreshing = true;
         try
         {
-            setSelectedToolButton(plugin.getTool());
-            shapeTypeBox.setSelectedItem(plugin.getShapeType());
-            fontBox.setSelectedItem(plugin.getFontStyle());
-            frameStyleBox.setSelectedItem(plugin.getFrameStyle());
-            int selectedSize = getSelectedToolSize();
-            sizeSlider.setMinimum(getSelectedSizeMinimum());
-            sizeSlider.setMaximum(Math.max(getSelectedSizeSliderMaximum(), selectedSize));
-            sizeSlider.setValue(selectedSize);
-            if (!sizeField.getText().equals(String.valueOf(selectedSize)))
+            if (!toolRequestPending
+                || !state.editingAvailable
+                || state.handledPanelToolRequestId >= pendingToolRequestId)
+            {
+                displayedTool = state.tool;
+                toolRequestPending = false;
+            }
+            setSelectedToolButton(displayedTool);
+            shapeTypeBox.setSelectedItem(state.shapeType);
+            fontBox.setSelectedItem(state.fontStyle);
+            frameStyleBox.setSelectedItem(state.frameStyle);
+            PaintTool effectiveTool = toolRequestPending ? displayedTool : state.tool;
+            int selectedSize = getSelectedToolSize(state, effectiveTool);
+            if (!toolRequestPending && !sizeSlider.getValueIsAdjusting())
+            {
+                sizeSlider.setMinimum(getSelectedSizeMinimum(effectiveTool));
+                sizeSlider.setMaximum(Math.max(getSelectedSizeSliderMaximum(effectiveTool), selectedSize));
+                sizeSlider.setValue(selectedSize);
+            }
+            if (!toolRequestPending
+                && !sizeField.isFocusOwner()
+                && !sizeField.getText().equals(String.valueOf(selectedSize)))
             {
                 sizeField.setText(String.valueOf(selectedSize));
             }
-            if (!textField.getText().equals(plugin.getPendingText()))
+            if (!textField.isFocusOwner() && !textField.getText().equals(state.pendingText))
             {
-                textField.setText(plugin.getPendingText());
+                textField.setText(state.pendingText);
             }
 
-            Color color = plugin.getColor();
+            Color color = state.color;
             syncButtonColor(colorButton, color);
-            syncButtonColor(textBackgroundColorButton, opaque(plugin.getTextBackgroundColor()));
-            syncButtonColor(textBorderColorButton, opaque(plugin.getTextBorderColor()));
-            syncButtonColor(frameColorButton, opaque(plugin.getFrameColor()));
-            frameRainbowCheck.setSelected(plugin.isFrameRainbowEnabled());
-            PaintTool tool = plugin.getTool();
-            boolean editingAvailable = plugin.isEditingAvailable();
-            boolean textTool = tool == PaintTool.TEXT;
-            boolean shapeTool = tool == PaintTool.SHAPE;
-            boolean sizeEnabled = editingAvailable && tool != null;
+            syncButtonColor(textBackgroundColorButton, opaque(state.textBackgroundColor));
+            syncButtonColor(textBorderColorButton, opaque(state.textBorderColor));
+            syncButtonColor(frameColorButton, opaque(state.frameColor));
+            frameRainbowCheck.setSelected(state.frameRainbowEnabled);
+            boolean editingAvailable = state.editingAvailable;
+            boolean textTool = effectiveTool == PaintTool.TEXT;
+            boolean shapeTool = effectiveTool == PaintTool.SHAPE;
+            boolean sizeEnabled = editingAvailable && effectiveTool != null;
             brushButton.setEnabled(editingAvailable);
             shapeButton.setEnabled(editingAvailable);
             textButton.setEnabled(editingAvailable);
@@ -285,16 +328,16 @@ class PaintOverlaysPanel extends PluginPanel
             textField.setEnabled(editingAvailable && textTool);
             textBackgroundColorButton.setEnabled(editingAvailable && textTool);
             textBorderColorButton.setEnabled(editingAvailable && textTool);
-            colorButton.setEnabled(editingAvailable && tool != PaintTool.ERASER);
-            frameColorButton.setEnabled(editingAvailable && !plugin.isFrameRainbowEnabled());
+            colorButton.setEnabled(editingAvailable && effectiveTool != PaintTool.ERASER);
+            frameColorButton.setEnabled(editingAvailable && !state.frameRainbowEnabled);
             undoButton.setText(plugin.getUndoActionText());
-            undoButton.setEnabled(editingAvailable && plugin.canUndo());
-            clearButton.setText(plugin.getClearActionText());
-            clearButton.setEnabled(editingAvailable && plugin.canClearSurface());
-            drawingTestButton.setEnabled(plugin.canGenerateDrawingTest());
-            exportDebugButton.setEnabled(editingAvailable && plugin.areDebugToolsEnabled());
-            statusLabel.setText(html(plugin.getInputStatusText()));
-            hintLabel.setText(buildHintText(plugin));
+            undoButton.setEnabled(editingAvailable && state.undoAvailable);
+            clearButton.setText(state.clearActionText);
+            clearButton.setEnabled(editingAvailable && state.clearAvailable);
+            drawingTestButton.setEnabled(state.drawingTestAvailable);
+            exportDebugButton.setEnabled(editingAvailable && state.debugToolsEnabled);
+            statusLabel.setText(html(state.inputStatusText));
+            hintLabel.setText(buildHintText(state, effectiveTool));
         }
         finally
         {
@@ -320,14 +363,11 @@ class PaintOverlaysPanel extends PluginPanel
             }
 
             closeActiveColorPicker();
-            if (plugin.getTool() == tool)
-            {
-                plugin.setTool(null);
-            }
-            else
-            {
-                plugin.setTool(tool);
-            }
+            PaintTool nextTool = displayedTool == tool ? null : tool;
+            displayedTool = nextTool;
+            toolRequestPending = true;
+            setSelectedToolButton(nextTool);
+            pendingToolRequestId = plugin.requestPanelToolChange(nextTool);
         });
     }
 
@@ -408,9 +448,17 @@ class PaintOverlaysPanel extends PluginPanel
         }
     }
 
+    private void updatePendingText()
+    {
+        if (!refreshing)
+        {
+            plugin.setPendingText(textField.getText());
+        }
+    }
+
     private void applySelectedToolSize(int value)
     {
-        PaintTool tool = plugin.getTool();
+        PaintTool tool = displayedTool;
         if (tool == null)
         {
             return;
@@ -432,27 +480,25 @@ class PaintOverlaysPanel extends PluginPanel
         }
     }
 
-    private int getSelectedToolSize()
+    private static int getSelectedToolSize(PaintPanelState state, PaintTool tool)
     {
-        PaintTool tool = plugin.getTool();
         if (tool == PaintTool.SHAPE)
         {
-            return plugin.getShapeSize();
+            return state.shapeSize;
         }
         if (tool == PaintTool.TEXT)
         {
-            return plugin.getTextSize();
+            return state.textSize;
         }
         if (tool == PaintTool.BRUSH || tool == PaintTool.ERASER)
         {
-            return plugin.getBrushSize();
+            return state.brushSize;
         }
-        return plugin.getBrushSize();
+        return state.brushSize;
     }
 
-    private int getSelectedSizeMinimum()
+    private static int getSelectedSizeMinimum(PaintTool tool)
     {
-        PaintTool tool = plugin.getTool();
         if (tool == PaintTool.SHAPE)
         {
             return 4;
@@ -460,9 +506,8 @@ class PaintOverlaysPanel extends PluginPanel
         return 1;
     }
 
-    private int getSelectedSizeSliderMaximum()
+    private static int getSelectedSizeSliderMaximum(PaintTool tool)
     {
-        PaintTool tool = plugin.getTool();
         if (tool == PaintTool.SHAPE)
         {
             return DEFAULT_SHAPE_SLIDER_MAX;
@@ -521,21 +566,40 @@ class PaintOverlaysPanel extends PluginPanel
         picker.dispose();
     }
 
+    void disposePanel()
+    {
+        if (SwingUtilities.isEventDispatchThread())
+        {
+            closeActiveColorPicker();
+            return;
+        }
+
+        SwingUtilities.invokeLater(this::closeActiveColorPicker);
+    }
+
     private ClearScope promptClearScope()
     {
-        String message = plugin.isWorldMapOpen()
+        boolean worldMap = plugin.isWorldMapOpen();
+        String message = worldMap
             ? "Choose how much map paint to clear:\n\n"
-                + "Small Chunk clears only the current map region under your target or the map center.\n"
-                + "Large Chunks clears the world map regions currently visible on screen."
+                + "Current Region clears the current map region.\n"
+                + "Visible Regions clears the map regions currently visible on screen."
             : "Choose how much in-game paint to clear:\n\n"
-                + "Small Chunk clears only the current chunk under your target or player position.\n"
-                + "Large Chunks clears a wide 3x3 chunk area around your player.";
-        String[] options = new String[]
-        {
-            "Small Chunk",
-            "Large Chunks",
-            "Cancel"
-        };
+                + "Current Chunk clears only the chunk your player is currently in.\n"
+                + "Surrounding Chunks clears the current chunk plus the surrounding 3x3 chunk area around your player.";
+        String[] options = worldMap
+            ? new String[]
+            {
+                "Current Region",
+                "Visible Regions",
+                "Cancel"
+            }
+            : new String[]
+            {
+                "Current Chunk",
+                "Surrounding Chunks",
+                "Cancel"
+            };
         int choice = JOptionPane.showOptionDialog(
             this,
             message,
@@ -630,11 +694,10 @@ class PaintOverlaysPanel extends PluginPanel
         return panel;
     }
 
-    private static String buildHintText(PaintOverlaysPlugin plugin)
+    private static String buildHintText(PaintPanelState state, PaintTool tool)
     {
-        PaintInputMode mode = plugin.getInputMode();
-        PaintTool tool = plugin.getTool();
-        if (!plugin.isEditingAvailable())
+        PaintInputMode mode = state.inputMode;
+        if (!state.editingAvailable)
         {
             return html("Paint tools are available after logging in.");
         }
@@ -644,9 +707,9 @@ class PaintOverlaysPanel extends PluginPanel
             return html("Drawing is off. Select a tool at the very top of this panel to paint. While editing is active, click the same tool again or press ESC to turn drawing off and resume playing.");
         }
 
-        if (mode == PaintInputMode.WORLD_MAP && !plugin.isWorldMapInputAvailable())
+        if (mode == PaintInputMode.WORLD_MAP && !state.worldMapInputAvailable)
         {
-            if (!plugin.isSceneInputAvailable())
+            if (!state.sceneInputAvailable)
             {
                 return html("Paint input is disabled until you are logged into the game.");
             }
@@ -654,14 +717,14 @@ class PaintOverlaysPanel extends PluginPanel
             return html("World Map mode only captures input while the world map is open.");
         }
 
-        if (mode == PaintInputMode.SCENE && !plugin.isSceneInputAvailable())
+        if (mode == PaintInputMode.SCENE && !state.sceneInputAvailable)
         {
             return html("In-Game mode only captures input while you are logged into the game and the world map is closed.");
         }
 
         if (tool == PaintTool.SHAPE)
         {
-            return html("Left-click to place a " + plugin.getShapeType().toString().toLowerCase() + " with the current size. Click the same tool button again or press ESC to turn drawing off.");
+            return html("Left-click to place a " + state.shapeType.toString().toLowerCase() + " with the current size. Click the same tool button again or press ESC to turn drawing off.");
         }
 
         if (tool == PaintTool.TEXT)

@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Graphics2D;
+import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Rectangle2D;
@@ -23,6 +24,10 @@ import net.runelite.client.ui.overlay.OverlayPosition;
 
 class PaintOverlaysWorldMapOverlay extends Overlay
 {
+    private static final float CLEAR_PREVIEW_PERIOD_MILLIS = 1800f;
+    private static final Color CLEAR_PREVIEW_AREA_BASE = new Color(126, 28, 28);
+    private static final Color CLEAR_PREVIEW_CHUNK_BASE = new Color(92, 0, 0);
+    private static final BasicStroke SHAPE_STROKE = new BasicStroke(2f);
     private final Client client;
     private final PaintOverlaysPlugin plugin;
     private volatile PaintWorldMapViewState viewState = PaintWorldMapViewState.unavailable();
@@ -49,36 +54,62 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             return null;
         }
 
-        graphics.setClip(currentViewState.getClipArea());
-        graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-        for (Integer regionId : currentViewState.getVisibleRegionIds())
+        Shape previousClip = graphics.getClip();
+        try
         {
-            PaintChunkData chunk = plugin.getMapChunk(regionId);
-            if (chunk != null)
+            graphics.clip(currentViewState.getClipArea());
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            Collection<PaintChunkData> chunks = plugin.getVisibleMapChunks(currentViewState.getVisibleRegionIds());
+            for (PaintChunkData chunk : chunks)
             {
-                renderChunk(graphics, chunk, currentViewState);
+                for (PaintStroke stroke : chunk.strokes)
+                {
+                    renderStroke(graphics, stroke, currentViewState);
+                }
+            }
+
+            PaintStroke activeStroke = plugin.getActiveMapStroke();
+            if (activeStroke != null)
+            {
+                renderStroke(graphics, activeStroke, currentViewState);
+            }
+
+            for (PaintChunkData chunk : chunks)
+            {
+                for (PaintShape shape : chunk.shapes)
+                {
+                    renderShape(graphics, shape, currentViewState);
+                }
+            }
+
+            for (PaintChunkData chunk : chunks)
+            {
+                for (PaintText text : chunk.texts)
+                {
+                    renderText(graphics, text, currentViewState);
+                }
+            }
+
+            renderMapClearPreview(graphics, currentViewState);
+
+            if (plugin.getPluginConfig().showCursorPreview() && plugin.getInputMode() == PaintInputMode.WORLD_MAP)
+            {
+                Point mouseCanvas = plugin.getMouseCanvasPosition();
+                PaintTool tool = plugin.getTool();
+                PaintTarget previewTarget = mouseCanvas != null && (tool == PaintTool.SHAPE || tool == PaintTool.TEXT)
+                    ? currentViewState.getTarget(mouseCanvas.getX(), mouseCanvas.getY())
+                    : null;
+                renderPreview(
+                    graphics,
+                    previewTarget,
+                    mouseCanvas,
+                    currentViewState);
             }
         }
-
-        PaintStroke activeStroke = plugin.getActiveMapStroke();
-        if (activeStroke != null)
+        finally
         {
-            renderStroke(graphics, activeStroke, currentViewState);
-        }
-
-        if (plugin.getPluginConfig().showCursorPreview() && plugin.getInputMode() == PaintInputMode.WORLD_MAP)
-        {
-            Point mouseCanvas = plugin.getMouseCanvasPosition();
-            PaintTool tool = plugin.getTool();
-            PaintTarget previewTarget = tool == PaintTool.SHAPE || tool == PaintTool.TEXT
-                ? currentViewState.getTarget(mouseCanvas.getX(), mouseCanvas.getY())
-                : null;
-            renderPreview(
-                graphics,
-                previewTarget,
-                mouseCanvas,
-                currentViewState);
+            graphics.setClip(previousClip);
         }
 
         return null;
@@ -94,6 +125,11 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         return viewState.getCenterRegionId();
     }
 
+    void resetViewState()
+    {
+        viewState = PaintWorldMapViewState.unavailable();
+    }
+
     PaintTarget getTarget(int mouseX, int mouseY)
     {
         return viewState.getTarget(mouseX, mouseY);
@@ -104,22 +140,14 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         return viewState.containsCanvasPoint(mouseX, mouseY);
     }
 
-    private void renderChunk(Graphics2D graphics, PaintChunkData chunk, PaintWorldMapViewState currentViewState)
+    boolean canSweepBetweenCanvasPoints(int startX, int startY, int endX, int endY)
     {
-        for (PaintStroke stroke : chunk.strokes)
-        {
-            renderStroke(graphics, stroke, currentViewState);
-        }
+        return viewState.canSweepBetweenCanvasPoints(startX, startY, endX, endY);
+    }
 
-        for (PaintShape shape : chunk.shapes)
-        {
-            renderShape(graphics, shape, currentViewState);
-        }
-
-        for (PaintText text : chunk.texts)
-        {
-            renderText(graphics, text, currentViewState);
-        }
+    boolean canEraseBetweenCanvasPoints(int startX, int startY, int endX, int endY, int radius)
+    {
+        return viewState.canEraseBetweenCanvasPoints(startX, startY, endX, endY, radius);
     }
 
     private void renderStroke(Graphics2D graphics, PaintStroke stroke, PaintWorldMapViewState currentViewState)
@@ -129,28 +157,35 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             return;
         }
 
-        graphics.setColor(new Color(stroke.colorArgb, true));
-        graphics.setStroke(new BasicStroke(stroke.width, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        java.awt.Stroke previousStroke = graphics.getStroke();
+        graphics.setColor(stroke.getColor());
+        graphics.setStroke(PaintMath.roundStroke(stroke.width));
 
-        if (stroke.points.size() == 1)
-        {
-            Point point = toCanvasPoint(stroke.points.get(0), currentViewState);
-            if (point != null)
-            {
-                int radius = Math.max(2, stroke.width / 2);
-                graphics.fillOval(point.getX() - radius, point.getY() - radius, radius * 2, radius * 2);
-            }
-            return;
-        }
-
-        Path2D.Double path = new Path2D.Double();
+        Path2D.Float path = new Path2D.Float();
         boolean started = false;
+        Point segmentStart = null;
+        int segmentPointCount = 0;
         for (PaintPoint point : stroke.points)
         {
+            if (point == null || point.startsNewSegment())
+            {
+                renderSingletonStrokeSegment(graphics, segmentStart, segmentPointCount, stroke.width);
+                started = false;
+                segmentStart = null;
+                segmentPointCount = 0;
+            }
+            if (point == null)
+            {
+                continue;
+            }
+
             Point canvasPoint = toCanvasPoint(point, currentViewState);
             if (canvasPoint == null)
             {
+                renderSingletonStrokeSegment(graphics, segmentStart, segmentPointCount, stroke.width);
                 started = false;
+                segmentStart = null;
+                segmentPointCount = 0;
                 continue;
             }
 
@@ -158,14 +193,30 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             {
                 path.moveTo(canvasPoint.getX(), canvasPoint.getY());
                 started = true;
+                segmentStart = canvasPoint;
+                segmentPointCount = 1;
             }
             else
             {
                 path.lineTo(canvasPoint.getX(), canvasPoint.getY());
+                segmentPointCount++;
             }
         }
 
+        renderSingletonStrokeSegment(graphics, segmentStart, segmentPointCount, stroke.width);
         graphics.draw(path);
+        graphics.setStroke(previousStroke);
+    }
+
+    private static void renderSingletonStrokeSegment(Graphics2D graphics, Point point, int pointCount, int width)
+    {
+        if (point == null || pointCount != 1)
+        {
+            return;
+        }
+
+        int radius = Math.max(2, width / 2);
+        graphics.fillOval(point.getX() - radius, point.getY() - radius, radius * 2, radius * 2);
     }
 
     private void renderText(Graphics2D graphics, PaintText text, PaintWorldMapViewState currentViewState)
@@ -180,13 +231,61 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         Font textFont = text.fontStyle.createFont(scaledWorldMapTextSize(text.fontSize, currentViewState));
         graphics.setFont(textFont);
         renderTextDecoration(graphics, point, textFont, text.text, worldMapTextScale(currentViewState),
-            new Color(text.backgroundColorArgb, true),
-            new Color(text.borderColorArgb, true));
-        graphics.setColor(new Color(0, 0, 0, Math.min(255, new Color(text.colorArgb, true).getAlpha())));
+            text.getBackgroundColor(),
+            text.getBorderColor());
+        graphics.setColor(text.getShadowColor());
         graphics.drawString(text.text, point.getX() + 1, point.getY() + 1);
-        graphics.setColor(new Color(text.colorArgb, true));
+        graphics.setColor(text.getColor());
         graphics.drawString(text.text, point.getX(), point.getY());
         graphics.setFont(previous);
+    }
+
+    private void renderMapClearPreview(Graphics2D graphics, PaintWorldMapViewState currentViewState)
+    {
+        PaintOverlaysPlugin.MapClearPreview preview = plugin.getMapClearPreview();
+        if (preview == null)
+        {
+            return;
+        }
+
+        float pulse = 0.5f + 0.5f * (float) Math.sin(System.currentTimeMillis() * ((Math.PI * 2.0) / CLEAR_PREVIEW_PERIOD_MILLIS));
+        for (Integer regionId : preview.visibleRegionIds)
+        {
+            if (regionId == null || regionId == preview.currentRegionId)
+            {
+                continue;
+            }
+
+            renderMapRegionPreview(graphics, currentViewState, regionId, false, pulse);
+        }
+
+        if (preview.currentRegionId >= 0)
+        {
+            renderMapRegionPreview(graphics, currentViewState, preview.currentRegionId, true, pulse);
+        }
+    }
+
+    private void renderMapRegionPreview(Graphics2D graphics, PaintWorldMapViewState currentViewState, int regionId, boolean currentChunk, float pulse)
+    {
+        Polygon polygon = mapRegionPolygon(regionId, currentViewState);
+        if (polygon == null)
+        {
+            return;
+        }
+
+        java.awt.Stroke previousStroke = graphics.getStroke();
+        Color baseColor = currentChunk ? CLEAR_PREVIEW_CHUNK_BASE : CLEAR_PREVIEW_AREA_BASE;
+        graphics.setColor(withAlpha(baseColor, currentChunk ? Math.round(88 + pulse * 52f) : Math.round(34 + pulse * 22f)));
+        graphics.fillPolygon(polygon);
+
+        graphics.setColor(withAlpha(baseColor.brighter(), currentChunk ? Math.round(94 + pulse * 42f) : Math.round(58 + pulse * 30f)));
+        graphics.setStroke(new BasicStroke(currentChunk ? 6f + pulse * 2f : 3f + pulse * 1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        graphics.drawPolygon(polygon);
+
+        graphics.setColor(withAlpha(baseColor.brighter(), currentChunk ? Math.round(185 + pulse * 45f) : Math.round(118 + pulse * 35f)));
+        graphics.setStroke(new BasicStroke(currentChunk ? 2.5f + pulse : 1.5f + pulse * 0.75f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        graphics.drawPolygon(polygon);
+        graphics.setStroke(previousStroke);
     }
 
     private void renderShape(Graphics2D graphics, PaintShape shape, PaintWorldMapViewState currentViewState)
@@ -205,8 +304,8 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         }
 
         java.awt.Stroke previousStroke = graphics.getStroke();
-        graphics.setColor(new Color(shape.colorArgb, true));
-        graphics.setStroke(new BasicStroke(2f));
+        graphics.setColor(shape.getColor());
+        graphics.setStroke(SHAPE_STROKE);
         if (PaintMath.shouldFillShape(shape.shapeType))
         {
             graphics.fill(outline);
@@ -354,14 +453,49 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         return toCanvasPoint(point.worldX, point.worldY, point.offsetX, point.offsetY, currentViewState);
     }
 
+    private Polygon mapRegionPolygon(int regionId, PaintWorldMapViewState currentViewState)
+    {
+        int regionX = regionId >>> 8;
+        int regionY = regionId & 0xFF;
+        int worldX = regionX << 6;
+        int worldY = regionY << 6;
+
+        Point southWest = toCanvasPoint(worldX, worldY, 0, 0, currentViewState);
+        Point southEast = toCanvasPoint(worldX + 63, worldY, 128, 0, currentViewState);
+        Point northEast = toCanvasPoint(worldX + 63, worldY + 63, 128, 128, currentViewState);
+        Point northWest = toCanvasPoint(worldX, worldY + 63, 0, 128, currentViewState);
+        if (southWest == null || southEast == null || northEast == null || northWest == null)
+        {
+            return null;
+        }
+
+        Polygon polygon = new Polygon();
+        polygon.addPoint(northWest.getX(), northWest.getY());
+        polygon.addPoint(northEast.getX(), northEast.getY());
+        polygon.addPoint(southEast.getX(), southEast.getY());
+        polygon.addPoint(southWest.getX(), southWest.getY());
+        return polygon;
+    }
+
     Point toCanvasPoint(int worldX, int worldY, int offsetX, int offsetY)
     {
         return viewState.toCanvasPoint(worldX, worldY, offsetX, offsetY);
     }
 
+    Font getRenderedTextFont(PaintText text)
+    {
+        return text.fontStyle.createFont(scaledWorldMapTextSize(text.fontSize, viewState));
+    }
+
     private Point toCanvasPoint(int worldX, int worldY, int offsetX, int offsetY, PaintWorldMapViewState currentViewState)
     {
         return currentViewState.toCanvasPoint(worldX, worldY, offsetX, offsetY);
+    }
+
+    private static Color withAlpha(Color color, int alpha)
+    {
+        int clampedAlpha = Math.max(0, Math.min(255, alpha));
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), clampedAlpha);
     }
 
     private PaintWorldMapViewState snapshotViewState()
@@ -378,11 +512,20 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         Rectangle overviewBounds = overview != null && !overview.isHidden() ? overview.getBounds() : null;
         Rectangle surfaceSelectorBounds = surfaceSelector != null && !surfaceSelector.isHidden() ? surfaceSelector.getBounds() : null;
 
+        Rectangle mapBounds = mapWidget.getBounds();
+        float pixelsPerTile = worldMap.getWorldMapZoom();
+        Point center = worldMap.getWorldMapPosition();
+        PaintWorldMapViewState current = viewState;
+        if (current.matches(mapBounds, overviewBounds, surfaceSelectorBounds, pixelsPerTile, center))
+        {
+            return current;
+        }
+
         return PaintWorldMapViewState.of(
-            mapWidget.getBounds(),
+            mapBounds,
             overviewBounds,
             surfaceSelectorBounds,
-            worldMap.getWorldMapZoom(),
-            worldMap.getWorldMapPosition());
+            pixelsPerTile,
+            center);
     }
 }

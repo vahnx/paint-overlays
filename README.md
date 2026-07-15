@@ -4,33 +4,37 @@ Paint in-game scenes or on top of the world map with any color or place text not
 
 ## Features
 
-- Painting with a brush, text, shapes and eraser
+- Painting with a brush, text, shapes and eraser, with full color and transparency
 - World map painting with the same tools
-- Deeply customizable but simple, clean UI in the sidepanel
+- Deeply customizable yet simple, clean UI in the sidepanel
+
+## Usage
+
+Click the sidepanel button to open the interface, then click a tool at the top to paint and press ESC or click the tool again to exit edit mode.
 
 ## Screenshots
 
 ![Example 1](images/po-demo.gif)
 
-![Example 4](images/po-ingame-tele-shortcuts.png)
+![Example 2](images/po-ingame-tele-shortcuts.png)
 
-![Example 7](images/po-world-map.png)
+![Example 3](images/po-world-map.png)
 
-![Example 2](images/po-ingame-directions.png)
+![Example 4](images/po-ingame-directions.png)
 
-![Example 7](images/po-world-map-2.png)
+![Example 5](images/po-world-map-2.png)
 
-![Example 1](images/po-ingame-define-safezone.png)
+![Example 6](images/po-ingame-define-safezone.png)
 
-![Example 3](images/po-ingame-shapes-text-warnings.png)
+![Example 7](images/po-ingame-shapes-text-warnings.png)
 
-![Example 5](images/po-ingame-text-reminders.png)
+![Example 8](images/po-ingame-text-reminders.png)
 
-![Example 6](images/po-ingame-warning.png)
+![Example 9](images/po-ingame-warning.png)
 
-![Example 7](images/po-full.png)
+![Example 10](images/po-full.png)
 
-![Example 8](images/po-settings.png)
+![Example 11](images/po-settings.png)
 
 ## Known Bugs
 
