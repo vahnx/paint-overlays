@@ -15,6 +15,9 @@ repositories {
 
 def runeLiteVersion = 'latest.release'
 def pluginMainClass = 'com.paintoverlays.PaintOverlaysPluginTest'
+def debugToolsEnabled = providers.gradleProperty('paintOverlaysDebugTools')
+    .map { it.toBoolean() }
+    .orElse(false)
 
 dependencies {
     compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
@@ -38,7 +41,7 @@ tasks.withType(JavaCompile).configureEach {
 tasks.register('run', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = pluginMainClass
-    jvmArgs "-ea", "--add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED", "-Dpaintoverlays.debugTools=true"
+    jvmArgs "-ea", "--add-exports=java.desktop/com.apple.eawt=ALL-UNNAMED", "-Dpaintoverlays.debugTools=${debugToolsEnabled.get()}"
     args "--developer-mode", "--debug"
 }
 
