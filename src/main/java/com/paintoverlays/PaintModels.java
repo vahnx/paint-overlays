@@ -115,7 +115,7 @@ enum PaintShapeType
 {
     RECTANGLE("Square"),
     CIRCLE("Circle"),
-    X("X"),
+    X("Cross"),
     TRIANGLE("Triangle"),
     DIAMOND("Diamond"),
     STAR("Star"),
