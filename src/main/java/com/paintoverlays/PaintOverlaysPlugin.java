@@ -2,16 +2,13 @@ package com.paintoverlays;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
-import java.awt.AWTException;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
-import java.awt.IllegalComponentStateException;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
-import java.awt.Robot;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Rectangle2D;
@@ -22,8 +19,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -43,7 +38,6 @@ import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -189,8 +183,6 @@ public class PaintOverlaysPlugin extends Plugin
     private PaintOverlaysMouseListener mouseListener;
     private PaintOverlaysHotkeyListener hotkeyListener;
     private BufferedImage iconImage;
-    private Future<?> debugExportFuture;
-
     private volatile PaintTool tool;
     private volatile PaintShapeType shapeType = PaintShapeType.RECTANGLE;
     private volatile PaintFontStyle fontStyle = PaintFontStyle.RUNE_SCAPE;
@@ -319,11 +311,6 @@ public class PaintOverlaysPlugin extends Plugin
         mouseDragScheduled.set(false);
         lastClientDragPoint = null;
         lastClientDragMapPointUsable = false;
-        if (debugExportFuture != null)
-        {
-            debugExportFuture.cancel(true);
-            debugExportFuture = null;
-        }
         mouseManager.unregisterMouseListener(mouseListener);
         if (hotkeyListener != null)
         {
@@ -898,16 +885,6 @@ public class PaintOverlaysPlugin extends Plugin
         clientThread.invoke(this::generateDrawingTestOnClientThread);
     }
 
-    void exportDebugSnapshot()
-    {
-        if (!areDebugToolsEnabled())
-        {
-            return;
-        }
-
-        clientThread.invoke(this::exportDebugSnapshotOnClientThread);
-    }
-
     String getUndoActionText()
     {
         return "Undo Last";
@@ -1103,74 +1080,6 @@ public class PaintOverlaysPlugin extends Plugin
         }
 
         refreshPanel();
-    }
-
-    private void exportDebugSnapshotOnClientThread()
-    {
-        finalizePendingPaintAction();
-        refreshPanel();
-        if (executor == null || (debugExportFuture != null && !debugExportFuture.isDone()))
-        {
-            return;
-        }
-
-        String timestamp = String.valueOf(System.currentTimeMillis());
-        StringWriter report = new StringWriter();
-        try (PrintWriter writer = new PrintWriter(report))
-        {
-            writer.println("timestamp=" + timestamp);
-            writer.println("profileKey=" + loadedRsProfileKey);
-            writer.println("worldMapOpen=" + worldMapOpen);
-            writer.println("sceneChunkCount=" + sceneChunkKeys.size());
-            writer.println("mapChunkCount=" + mapChunkKeys.size());
-            writer.println("currentSceneChunk=" + getCurrentSceneChunkKey());
-            writer.println("currentMapChunk=" + getCurrentMapChunkKey());
-            writer.println();
-            writer.println("[scene]");
-            writeChunkDiagnostics(writer, sceneChunks, sceneChunkKeys);
-            writer.println();
-            writer.println("[map]");
-            writeChunkDiagnostics(writer, mapChunks, mapChunkKeys);
-        }
-
-        String reportText = report.toString();
-        debugExportFuture = executor.submit(() -> writeDebugExport(timestamp, reportText));
-    }
-
-    private void writeDebugExport(String timestamp, String reportText)
-    {
-        File debugDir = new File(RuneLite.RUNELITE_DIR, "paint-overlays-debug");
-        if (!debugDir.exists() && !debugDir.mkdirs())
-        {
-            log.warn("Failed to create debug export directory {}", debugDir);
-            return;
-        }
-
-        File textFile = new File(debugDir, "paint-overlays-debug-" + timestamp + ".txt");
-        File imageFile = new File(debugDir, "paint-overlays-debug-" + timestamp + ".png");
-
-        try (PrintWriter writer = new PrintWriter(textFile, StandardCharsets.UTF_8.name()))
-        {
-            writer.print(reportText);
-        }
-        catch (IOException ex)
-        {
-            log.warn("Failed to write paint debug report", ex);
-        }
-
-        try
-        {
-            captureCanvasSnapshot(imageFile);
-        }
-        catch (InterruptedException ex)
-        {
-            Thread.currentThread().interrupt();
-            log.debug("Paint debug snapshot capture was interrupted", ex);
-        }
-        catch (IOException | InvocationTargetException ex)
-        {
-            log.warn("Failed to capture paint debug snapshot", ex);
-        }
     }
 
     boolean hasSecondarySurfacePaint()
@@ -4720,49 +4629,6 @@ public class PaintOverlaysPlugin extends Plugin
     private String getStatusMapChunkKey()
     {
         return activeMapChunkKey != null ? activeMapChunkKey : cachedMapStatusChunkKey;
-    }
-
-    private void captureCanvasSnapshot(File outputFile) throws InvocationTargetException, InterruptedException, IOException
-    {
-        if (outputFile == null)
-        {
-            return;
-        }
-
-        final Rectangle[] captureBounds = new Rectangle[1];
-        SwingUtilities.invokeAndWait(() ->
-        {
-            try
-            {
-                java.awt.Canvas canvas = client.getCanvas();
-                if (canvas == null || canvas.getWidth() <= 0 || canvas.getHeight() <= 0 || !canvas.isShowing())
-                {
-                    return;
-                }
-
-                java.awt.Point location = canvas.getLocationOnScreen();
-                captureBounds[0] = new Rectangle(location.x, location.y, canvas.getWidth(), canvas.getHeight());
-            }
-            catch (IllegalComponentStateException ex)
-            {
-                throw new RuntimeException(ex);
-            }
-        });
-
-        if (captureBounds[0] == null)
-        {
-            throw new IOException("Canvas is not available for screen capture");
-        }
-
-        try
-        {
-            BufferedImage image = new Robot().createScreenCapture(captureBounds[0]);
-            ImageIO.write(image, "png", outputFile);
-        }
-        catch (AWTException ex)
-        {
-            throw new IOException("Failed to capture canvas screenshot", ex);
-        }
     }
 
     private void writeChunkDiagnostics(PrintWriter writer, Map<String, PaintChunkData> cache, Set<String> knownKeys)

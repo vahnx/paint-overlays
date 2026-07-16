@@ -59,7 +59,6 @@ class PaintOverlaysPanel extends PluginPanel
     private final JButton undoButton = new JButton();
     private final JButton clearButton = new JButton();
     private final JButton drawingTestButton = new JButton("Generate Drawing Test");
-    private final JButton exportDebugButton = new JButton("Export Debug Snapshot");
     private RuneliteColorPicker activeColorPicker;
     private boolean refreshing;
     private PaintTool displayedTool;
@@ -151,13 +150,10 @@ class PaintOverlaysPanel extends PluginPanel
             }
         });
         drawingTestButton.setHorizontalAlignment(SwingConstants.LEFT);
-        exportDebugButton.addActionListener(e -> plugin.exportDebugSnapshot());
-        exportDebugButton.setHorizontalAlignment(SwingConstants.LEFT);
         if (plugin.areDebugToolsEnabled())
         {
             JPanel debugSection = sectionPanel("Debug");
             debugSection.add(fullWidthRow(drawingTestButton));
-            debugSection.add(fullWidthRow(exportDebugButton));
             content.add(debugSection);
         }
 
@@ -335,7 +331,6 @@ class PaintOverlaysPanel extends PluginPanel
             clearButton.setText(state.clearActionText);
             clearButton.setEnabled(editingAvailable && state.clearAvailable);
             drawingTestButton.setEnabled(state.drawingTestAvailable);
-            exportDebugButton.setEnabled(editingAvailable && state.debugToolsEnabled);
             statusLabel.setText(html(state.inputStatusText));
             hintLabel.setText(buildHintText(state, effectiveTool));
         }
