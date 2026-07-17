@@ -1,6 +1,6 @@
 # Paint Overlays
 
-Paint in-game scenes or on top of the world map with any color or place text notes.
+Paint and draw text or shapes anywhere in-game or on the world map.
 
 ## Features
 
@@ -36,9 +36,9 @@ Click the sidepanel button to open the interface, then click a tool at the top t
 
 ![Example 11](images/po-settings.png)
 
-## Known Bugs
+## Known Issues
 
-- Elevated walkable surfaces such as the Grand Exchange platform are not reliably paintable yet. Paint targeting there can fail, so those areas are currently unsupported.
+- You cannot draw on elevated surfaces such as the Grand Exchange platform or the southern building in Seers.
 
 ## Support Development
 
