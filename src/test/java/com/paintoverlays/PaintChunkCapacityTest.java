@@ -1,7 +1,9 @@
 package com.paintoverlays;
 
 import com.google.gson.Gson;
+import java.awt.Canvas;
 import java.awt.Color;
+import java.awt.event.KeyEvent;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -10,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
@@ -428,6 +431,44 @@ public class PaintChunkCapacityTest
         assertTrue(!plugin.isSceneInputAvailable());
     }
 
+    @Test
+    public void escapeExitsEditingFromNonCanvasKeyEvent() throws Exception
+    {
+        PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+        Player player = proxy(Player.class);
+        setField(plugin, "client", clientWithState(GameState.LOGGED_IN, player, true));
+        setField(plugin, "clientThread", immediateClientThread());
+        setField(plugin, "loadedRsProfileKey", "profile");
+        setField(plugin, "tool", PaintTool.BRUSH);
+
+        KeyEvent event = new KeyEvent(
+            new Canvas(),
+            KeyEvent.KEY_PRESSED,
+            System.currentTimeMillis(),
+            0,
+            KeyEvent.VK_ESCAPE,
+            KeyEvent.CHAR_UNDEFINED);
+
+        assertTrue(plugin.handleKeyPressed(event));
+        assertEquals(null, getField(plugin, "tool"));
+    }
+
+    @Test
+    public void selectingToolRequestsCanvasFocusForHotkeys() throws Exception
+    {
+        PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+        Player player = proxy(Player.class);
+        FocusTrackingCanvas canvas = new FocusTrackingCanvas();
+        setField(plugin, "client", clientWithState(GameState.LOGGED_IN, player, true, canvas));
+        setField(plugin, "clientThread", immediateClientThread());
+        setField(plugin, "loadedRsProfileKey", "profile");
+
+        plugin.setTool(PaintTool.BRUSH);
+        SwingUtilities.invokeAndWait(() -> { });
+
+        assertTrue(canvas.focusRequested);
+    }
+
     private static void setField(Object target, String fieldName, Object value) throws Exception
     {
         Field field = PaintOverlaysPlugin.class.getDeclaredField(fieldName);
@@ -469,6 +510,16 @@ public class PaintChunkCapacityTest
 
     private static Client clientWithState(GameState gameState, Player localPlayer)
     {
+        return clientWithState(gameState, localPlayer, false, null);
+    }
+
+    private static Client clientWithState(GameState gameState, Player localPlayer, boolean clientThread)
+    {
+        return clientWithState(gameState, localPlayer, clientThread, null);
+    }
+
+    private static Client clientWithState(GameState gameState, Player localPlayer, boolean clientThread, Canvas canvas)
+    {
         return (Client) Proxy.newProxyInstance(
             Client.class.getClassLoader(),
             new Class<?>[] {Client.class},
@@ -480,10 +531,45 @@ public class PaintChunkCapacityTest
                         return gameState;
                     case "getLocalPlayer":
                         return localPlayer;
+                    case "isClientThread":
+                        return clientThread;
+                    case "getCanvas":
+                        return canvas;
                     default:
                         return defaultValue(method.getReturnType());
                 }
             });
+    }
+
+    private static ClientThread immediateClientThread()
+    {
+        return new ClientThread()
+        {
+            @Override
+            public void invokeLater(Runnable runnable)
+            {
+                runnable.run();
+            }
+
+            @Override
+            public void invoke(Runnable runnable)
+            {
+                runnable.run();
+            }
+
+        };
+    }
+
+    private static class FocusTrackingCanvas extends Canvas
+    {
+        private boolean focusRequested;
+
+        @Override
+        public boolean requestFocusInWindow()
+        {
+            focusRequested = true;
+            return true;
+        }
     }
 
     @SuppressWarnings("unchecked")

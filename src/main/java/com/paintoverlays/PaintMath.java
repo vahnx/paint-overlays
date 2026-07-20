@@ -244,8 +244,16 @@ final class PaintMath
         double right = centerX + half;
         double bottom = centerY + half;
 
+        Shape catalogShape = PaintShapeCatalog.shapeOutline(center, size, shapeType);
+        if (catalogShape != null)
+        {
+            return catalogShape;
+        }
+
         switch (shapeType)
         {
+            case LINE:
+                return buildLine(left, centerY, right, centerY);
             case CIRCLE:
                 return new Ellipse2D.Double(left, top, safeSize, safeSize);
             case X:
@@ -268,15 +276,54 @@ final class PaintMath
                 return buildSpiderWeb(centerX, centerY, safeSize);
             case TARGET:
                 return buildTarget(centerX, centerY, safeSize);
+            case HEART:
+                return buildHeart(centerX, centerY, safeSize);
+            case ARROW:
+                return buildArrow(centerX, centerY, safeSize);
+            case CHECK_MARK:
+                return buildCheckMark(centerX, centerY, safeSize);
+            case LOBSTER:
+                return buildLobster(centerX, centerY, safeSize);
+            case SWORD:
+                return buildSword(centerX, centerY, safeSize);
+            case BATTLE_AXE:
+                return buildBattleAxe(centerX, centerY, safeSize);
+            case SHIELD:
+                return buildShield(centerX, centerY, safeSize);
+            case DRAGON:
+                return buildDragon(centerX, centerY, safeSize);
             case RECTANGLE:
             default:
                 return new Rectangle2D.Double(left, top, safeSize, safeSize);
         }
     }
 
-    static boolean shouldFillShape(PaintShapeType shapeType)
+    static boolean canFillShape(PaintShapeType shapeType)
     {
-        return false;
+        Boolean catalogFillable = PaintShapeCatalog.canFillShape(shapeType);
+        if (catalogFillable != null)
+        {
+            return catalogFillable;
+        }
+
+        return shapeType != null
+            && shapeType != PaintShapeType.X
+            && shapeType != PaintShapeType.PLUS
+            && shapeType != PaintShapeType.SPIDER_WEB
+            && shapeType != PaintShapeType.TARGET
+            && shapeType != PaintShapeType.CHECK_MARK
+            && shapeType != PaintShapeType.ARROW
+            && shapeType != PaintShapeType.LINE
+            && shapeType != PaintShapeType.SWORD
+            && shapeType != PaintShapeType.BATTLE_AXE
+            && shapeType != PaintShapeType.SKULL
+            && shapeType != PaintShapeType.LOBSTER
+            && shapeType != PaintShapeType.DRAGON;
+    }
+
+    static boolean shouldFillShape(PaintShapeType shapeType, boolean fillEnabled)
+    {
+        return fillEnabled && canFillShape(shapeType);
     }
 
     static String sanitizePendingText(String text)
@@ -408,6 +455,14 @@ final class PaintMath
         return path;
     }
 
+    private static Shape buildLine(double startX, double startY, double endX, double endY)
+    {
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(startX, startY);
+        path.lineTo(endX, endY);
+        return path;
+    }
+
     private static Shape buildTriangle(double x1, double y1, double x2, double y2, double x3, double y3)
     {
         Path2D.Double path = new Path2D.Double();
@@ -510,6 +565,14 @@ final class PaintMath
         path.lineTo(centerX + size * 0.06, bottom - size * 0.22);
         path.moveTo(centerX + size * 0.18, bottom - size * 0.08);
         path.lineTo(centerX + size * 0.18, bottom - size * 0.22);
+        path.moveTo(left + size * 0.08, bottom - size * 0.06);
+        path.lineTo(right - size * 0.08, top + size * 0.66);
+        path.moveTo(right - size * 0.08, bottom - size * 0.06);
+        path.lineTo(left + size * 0.08, top + size * 0.66);
+        path.moveTo(left + size * 0.02, bottom - size * 0.12);
+        path.lineTo(left + size * 0.14, bottom);
+        path.moveTo(right - size * 0.02, bottom - size * 0.12);
+        path.lineTo(right - size * 0.14, bottom);
         return path;
     }
 
@@ -622,6 +685,153 @@ final class PaintMath
         path.lineTo(centerX + outer, centerY);
         path.moveTo(centerX, centerY - outer);
         path.lineTo(centerX, centerY + outer);
+        return path;
+    }
+
+    private static Shape buildHeart(double centerX, double centerY, double size)
+    {
+        double left = centerX - size / 2.0;
+        double top = centerY - size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(centerX, top + size * 0.82);
+        path.curveTo(left - size * 0.08, top + size * 0.36, left + size * 0.16, top + size * 0.04, centerX, top + size * 0.28);
+        path.curveTo(left + size * 0.84, top + size * 0.04, left + size * 1.08, top + size * 0.36, centerX, top + size * 0.82);
+        path.closePath();
+        return path;
+    }
+
+    private static Shape buildArrow(double centerX, double centerY, double size)
+    {
+        double top = centerY - size / 2.0;
+        double bottom = centerY + size / 2.0;
+        double headBaseY = top + size * 0.28;
+        double headHalfWidth = size * 0.18;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(centerX, bottom);
+        path.lineTo(centerX, top);
+        path.moveTo(centerX, top);
+        path.lineTo(centerX - headHalfWidth, headBaseY);
+        path.moveTo(centerX, top);
+        path.lineTo(centerX + headHalfWidth, headBaseY);
+        return path;
+    }
+
+    private static Shape buildCheckMark(double centerX, double centerY, double size)
+    {
+        double left = centerX - size / 2.0;
+        double top = centerY - size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(left + size * 0.12, top + size * 0.56);
+        path.lineTo(left + size * 0.40, top + size * 0.82);
+        path.lineTo(left + size * 0.88, top + size * 0.22);
+        return path;
+    }
+
+    private static Shape buildLobster(double centerX, double centerY, double size)
+    {
+        double left = centerX - size / 2.0;
+        double top = centerY - size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.append(new Ellipse2D.Double(left + size * 0.36, top + size * 0.22, size * 0.28, size * 0.54), false);
+        path.moveTo(centerX, top + size * 0.18);
+        path.lineTo(centerX, top + size * 0.84);
+        path.moveTo(left + size * 0.36, top + size * 0.34);
+        path.lineTo(left + size * 0.18, top + size * 0.18);
+        path.lineTo(left + size * 0.08, top + size * 0.30);
+        path.moveTo(left + size * 0.64, top + size * 0.34);
+        path.lineTo(left + size * 0.82, top + size * 0.18);
+        path.lineTo(left + size * 0.92, top + size * 0.30);
+        for (int i = 0; i < 4; i++)
+        {
+            double y = top + size * (0.44 + i * 0.09);
+            path.moveTo(left + size * 0.40, y);
+            path.lineTo(left + size * 0.18, y + size * 0.06);
+            path.moveTo(left + size * 0.60, y);
+            path.lineTo(left + size * 0.82, y + size * 0.06);
+        }
+        path.moveTo(centerX, top + size * 0.76);
+        path.lineTo(centerX - size * 0.10, top + size * 0.92);
+        path.moveTo(centerX, top + size * 0.76);
+        path.lineTo(centerX + size * 0.10, top + size * 0.92);
+        return path;
+    }
+
+    private static Shape buildSword(double centerX, double centerY, double size)
+    {
+        double top = centerY - size / 2.0;
+        double bottom = centerY + size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(centerX, top);
+        path.lineTo(centerX + size * 0.10, top + size * 0.18);
+        path.lineTo(centerX + size * 0.04, bottom - size * 0.30);
+        path.lineTo(centerX - size * 0.04, bottom - size * 0.30);
+        path.lineTo(centerX - size * 0.10, top + size * 0.18);
+        path.closePath();
+        path.moveTo(centerX - size * 0.28, bottom - size * 0.28);
+        path.lineTo(centerX + size * 0.28, bottom - size * 0.28);
+        path.moveTo(centerX, bottom - size * 0.28);
+        path.lineTo(centerX, bottom - size * 0.04);
+        path.moveTo(centerX - size * 0.10, bottom - size * 0.04);
+        path.lineTo(centerX + size * 0.10, bottom - size * 0.04);
+        return path;
+    }
+
+    private static Shape buildBattleAxe(double centerX, double centerY, double size)
+    {
+        double top = centerY - size / 2.0;
+        double bottom = centerY + size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(centerX, top + size * 0.12);
+        path.lineTo(centerX, bottom - size * 0.04);
+        path.moveTo(centerX - size * 0.30, top + size * 0.18);
+        path.quadTo(centerX - size * 0.52, top + size * 0.36, centerX - size * 0.28, top + size * 0.54);
+        path.lineTo(centerX, top + size * 0.36);
+        path.closePath();
+        path.moveTo(centerX + size * 0.30, top + size * 0.18);
+        path.quadTo(centerX + size * 0.52, top + size * 0.36, centerX + size * 0.28, top + size * 0.54);
+        path.lineTo(centerX, top + size * 0.36);
+        path.closePath();
+        path.moveTo(centerX - size * 0.10, bottom - size * 0.04);
+        path.lineTo(centerX + size * 0.10, bottom - size * 0.04);
+        return path;
+    }
+
+    private static Shape buildShield(double centerX, double centerY, double size)
+    {
+        double left = centerX - size / 2.0;
+        double top = centerY - size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(centerX, top + size * 0.06);
+        path.lineTo(left + size * 0.84, top + size * 0.18);
+        path.lineTo(left + size * 0.78, top + size * 0.62);
+        path.quadTo(centerX, top + size, left + size * 0.22, top + size * 0.62);
+        path.lineTo(left + size * 0.16, top + size * 0.18);
+        path.closePath();
+        path.moveTo(centerX, top + size * 0.14);
+        path.lineTo(centerX, top + size * 0.82);
+        path.moveTo(left + size * 0.28, top + size * 0.38);
+        path.lineTo(left + size * 0.72, top + size * 0.38);
+        return path;
+    }
+
+    private static Shape buildDragon(double centerX, double centerY, double size)
+    {
+        double left = centerX - size / 2.0;
+        double top = centerY - size / 2.0;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(left + size * 0.28, top + size * 0.70);
+        path.quadTo(left + size * 0.38, top + size * 0.22, left + size * 0.70, top + size * 0.26);
+        path.lineTo(left + size * 0.88, top + size * 0.12);
+        path.lineTo(left + size * 0.82, top + size * 0.34);
+        path.lineTo(left + size * 0.96, top + size * 0.42);
+        path.lineTo(left + size * 0.74, top + size * 0.46);
+        path.quadTo(left + size * 0.66, top + size * 0.76, left + size * 0.34, top + size * 0.84);
+        path.quadTo(left + size * 0.14, top + size * 0.84, left + size * 0.18, top + size * 0.62);
+        path.moveTo(left + size * 0.46, top + size * 0.42);
+        path.lineTo(left + size * 0.20, top + size * 0.18);
+        path.lineTo(left + size * 0.30, top + size * 0.52);
+        path.moveTo(left + size * 0.62, top + size * 0.36);
+        path.lineTo(left + size * 0.64, top + size * 0.36);
         return path;
     }
 

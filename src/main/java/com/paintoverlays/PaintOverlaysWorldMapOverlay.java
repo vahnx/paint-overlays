@@ -9,8 +9,10 @@ import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.geom.Rectangle2D;
+import java.awt.geom.RoundRectangle2D;
 import java.awt.Shape;
 import java.awt.geom.Path2D;
+import java.awt.image.BufferedImage;
 import java.util.Collection;
 import javax.inject.Inject;
 import net.runelite.api.Client;
@@ -85,6 +87,14 @@ class PaintOverlaysWorldMapOverlay extends Overlay
 
             for (PaintChunkData chunk : chunks)
             {
+                for (PaintStamp stamp : chunk.stamps)
+                {
+                    renderStamp(graphics, stamp, currentViewState);
+                }
+            }
+
+            for (PaintChunkData chunk : chunks)
+            {
                 for (PaintText text : chunk.texts)
                 {
                     renderText(graphics, text, currentViewState);
@@ -97,7 +107,8 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             {
                 Point mouseCanvas = plugin.getMouseCanvasPosition();
                 PaintTool tool = plugin.getTool();
-                PaintTarget previewTarget = mouseCanvas != null && (tool == PaintTool.SHAPE || tool == PaintTool.TEXT)
+                PaintTarget previewTarget = mouseCanvas != null
+                    && (tool == PaintTool.SHAPE || tool == PaintTool.TEXT || tool == PaintTool.STAMP)
                     ? currentViewState.getTarget(mouseCanvas.getX(), mouseCanvas.getY())
                     : null;
                 renderPreview(
@@ -232,7 +243,8 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         graphics.setFont(textFont);
         renderTextDecoration(graphics, point, textFont, text.text, worldMapTextScale(currentViewState),
             text.getBackgroundColor(),
-            text.getBorderColor());
+            text.getBorderColor(),
+            text.frameStyle);
         graphics.setColor(text.getShadowColor());
         graphics.drawString(text.text, point.getX() + 1, point.getY() + 1);
         graphics.setColor(text.getColor());
@@ -296,7 +308,7 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             return;
         }
 
-        int size = Math.max(1, shape.size);
+        int size = scaledWorldMapObjectSize(shape.size, currentViewState);
         Shape outline = PaintMath.shapeOutline(center, size, shape.shapeType);
         if (outline == null)
         {
@@ -304,9 +316,11 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         }
 
         java.awt.Stroke previousStroke = graphics.getStroke();
+        java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
         graphics.setColor(shape.getColor());
         graphics.setStroke(SHAPE_STROKE);
-        if (PaintMath.shouldFillShape(shape.shapeType))
+        applyObjectTransform(graphics, center, shape.rotationDegrees, shape.flipHorizontal);
+        if (PaintMath.shouldFillShape(shape.shapeType, shape.filled))
         {
             graphics.fill(outline);
         }
@@ -314,7 +328,27 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         {
             graphics.draw(outline);
         }
+        graphics.setTransform(previousTransform);
         graphics.setStroke(previousStroke);
+    }
+
+    private void renderStamp(Graphics2D graphics, PaintStamp stamp, PaintWorldMapViewState currentViewState)
+    {
+        Point center = toCanvasPoint(stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY, currentViewState);
+        BufferedImage image = PaintStamps.getImage(stamp);
+        if (center == null || image == null)
+        {
+            return;
+        }
+
+        int size = scaledWorldMapObjectSize(stamp.size, currentViewState);
+        Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        applyObjectTransform(graphics, center, stamp.rotationDegrees, stamp.flipHorizontal);
+        graphics.drawImage(image, center.getX() - size / 2, center.getY() - size / 2, size, size, null);
+        graphics.setTransform(previousTransform);
+        restoreInterpolationHint(graphics, previousInterpolation);
     }
 
     private void renderPreview(Graphics2D graphics, PaintTarget target, Point mouseCanvas, PaintWorldMapViewState currentViewState)
@@ -332,7 +366,7 @@ class PaintOverlaysWorldMapOverlay extends Overlay
                 return;
             }
 
-            int size = plugin.getShapeSize();
+            int size = scaledWorldMapObjectSize(plugin.getShapeSize(), currentViewState);
             Shape outline = PaintMath.shapeOutline(point, size, plugin.getShapeType());
             if (outline == null)
             {
@@ -340,9 +374,11 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             }
 
             java.awt.Stroke previousStroke = graphics.getStroke();
+            java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
             graphics.setColor(new Color(plugin.getColor().getRGB() & 0x00FFFFFF | 0xB4000000, true));
             graphics.setStroke(new BasicStroke(2f));
-            if (PaintMath.shouldFillShape(plugin.getShapeType()))
+            applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
+            if (PaintMath.shouldFillShape(plugin.getShapeType(), plugin.isShapeFillEnabled()))
             {
                 graphics.fill(outline);
             }
@@ -350,7 +386,33 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             {
                 graphics.draw(outline);
             }
+            graphics.setTransform(previousTransform);
             graphics.setStroke(previousStroke);
+            return;
+        }
+
+        if (plugin.getTool() == PaintTool.STAMP)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            Point point = toCanvasPoint(target.worldX, target.worldY, target.offsetX, target.offsetY, currentViewState);
+            BufferedImage image = PaintStamps.getImage(plugin.getStampType());
+            if (point == null || image == null)
+            {
+                return;
+            }
+
+            int size = scaledWorldMapObjectSize(plugin.getShapeSize(), currentViewState);
+            Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
+            graphics.drawImage(image, point.getX() - size / 2, point.getY() - size / 2, size, size, null);
+            graphics.setTransform(previousTransform);
+            restoreInterpolationHint(graphics, previousInterpolation);
             return;
         }
 
@@ -384,7 +446,8 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         renderTextDecoration(graphics, point, textFont, plugin.getPendingText().trim().isEmpty() ? "Text" : plugin.getPendingText().trim(),
             worldMapTextScale(currentViewState),
             plugin.getTextBackgroundColor(),
-            plugin.getTextBorderColor());
+            plugin.getTextBorderColor(),
+            plugin.getTextFrameStyle());
         graphics.setColor(new Color(plugin.getColor().getRed(), plugin.getColor().getGreen(), plugin.getColor().getBlue(), 180));
         graphics.drawString(plugin.getPendingText().trim().isEmpty() ? "Text" : plugin.getPendingText().trim(), point.getX(), point.getY());
         graphics.setFont(previous);
@@ -392,7 +455,7 @@ class PaintOverlaysWorldMapOverlay extends Overlay
 
     private static void renderTextDecoration(Graphics2D graphics, Point point, Font font, String text,
                                              float scale,
-                                             Color backgroundColor, Color borderColor)
+                                             Color backgroundColor, Color borderColor, PaintTextFrameStyle frameStyle)
     {
         if ((backgroundColor == null || backgroundColor.getAlpha() <= 0)
             && (borderColor == null || borderColor.getAlpha() <= 0))
@@ -412,10 +475,11 @@ class PaintOverlaysWorldMapOverlay extends Overlay
         int y = (int) Math.floor(bounds.getY()) - paddingY;
         int width = (int) Math.ceil(bounds.getWidth()) + paddingX * 2;
         int height = (int) Math.ceil(bounds.getHeight()) + paddingY * 2;
+        Shape frame = textFrameShape(x, y, width, height, Math.max(4, Math.round(6 * scale)), scale, frameStyle);
         if (backgroundColor != null && backgroundColor.getAlpha() > 0)
         {
             graphics.setColor(backgroundColor);
-            graphics.fillRoundRect(x, y, width, height, 6, 6);
+            graphics.fill(frame);
         }
 
         if (borderColor != null && borderColor.getAlpha() > 0)
@@ -423,14 +487,86 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             java.awt.Stroke previousStroke = graphics.getStroke();
             graphics.setColor(borderColor);
             graphics.setStroke(new BasicStroke(Math.max(1f, 1.5f * scale)));
-            graphics.drawRoundRect(x, y, width, height, 6, 6);
+            graphics.draw(frame);
             graphics.setStroke(previousStroke);
         }
+    }
+
+    private static Shape textFrameShape(int x, int y, int width, int height, int arc, float scale, PaintTextFrameStyle frameStyle)
+    {
+        if (frameStyle != PaintTextFrameStyle.SPEECH_BUBBLE)
+        {
+            return new RoundRectangle2D.Double(x, y, width, height, arc, arc);
+        }
+
+        int radius = Math.max(2, arc / 2);
+        int tailHeight = Math.max(5, Math.round(10 * scale));
+        int tailStartX = x + Math.min(width - radius - Math.round(12 * scale), Math.max(radius + Math.round(8 * scale), Math.round(12 * scale)));
+        int tailTipX = tailStartX - Math.max(5, Math.round(8 * scale));
+        int tailEndX = tailStartX + Math.max(10, Math.round(16 * scale));
+        int bottom = y + height;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(x + radius, y);
+        path.lineTo(x + width - radius, y);
+        path.quadTo(x + width, y, x + width, y + radius);
+        path.lineTo(x + width, bottom - radius);
+        path.quadTo(x + width, bottom, x + width - radius, bottom);
+        path.lineTo(tailEndX, bottom);
+        path.lineTo(tailTipX, bottom + tailHeight);
+        path.lineTo(tailStartX, bottom);
+        path.lineTo(x + radius, bottom);
+        path.quadTo(x, bottom, x, bottom - radius);
+        path.lineTo(x, y + radius);
+        path.quadTo(x, y, x + radius, y);
+        path.closePath();
+        return path;
+    }
+
+    private static void restoreInterpolationHint(Graphics2D graphics, Object previousInterpolation)
+    {
+        if (previousInterpolation == null)
+        {
+            graphics.getRenderingHints().remove(RenderingHints.KEY_INTERPOLATION);
+            return;
+        }
+
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation);
+    }
+
+    private static void applyObjectTransform(Graphics2D graphics, Point center, int rotationDegrees, boolean flipHorizontal)
+    {
+        graphics.translate(center.getX(), center.getY());
+        graphics.rotate(Math.toRadians(rotationDegrees));
+        if (flipHorizontal)
+        {
+            graphics.scale(-1.0, 1.0);
+        }
+        graphics.translate(-center.getX(), -center.getY());
     }
 
     private static int scaledWorldMapTextSize(int baseSize, PaintWorldMapViewState currentViewState)
     {
         return Math.max(8, Math.round(baseSize * worldMapTextScale(currentViewState)));
+    }
+
+    private static int scaledWorldMapObjectSize(int baseSize, PaintWorldMapViewState currentViewState)
+    {
+        return Math.max(1, Math.round(Math.max(1, baseSize) * worldMapObjectScale(currentViewState)));
+    }
+
+    private static float worldMapObjectScale(PaintWorldMapViewState currentViewState)
+    {
+        if (currentViewState == null)
+        {
+            return 1.0f;
+        }
+
+        float scale = currentViewState.getPixelsPerTile() / 4.0f;
+        if (scale < 0.35f)
+        {
+            return 0.35f;
+        }
+        return Math.min(2.5f, scale);
     }
 
     private static float worldMapTextScale(PaintWorldMapViewState currentViewState)
@@ -529,3 +665,4 @@ class PaintOverlaysWorldMapOverlay extends Overlay
             center);
     }
 }
+

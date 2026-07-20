@@ -5,3 +5,9 @@ out/
 bin/
 *.iml
 *.log
+tools/**/build/
+tools/**/out/
+tools/**/.gradle/
+tools/**/node_modules/
+tools/**/dist/
+tools/**/.tmp/

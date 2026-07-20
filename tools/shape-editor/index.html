@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paint Overlays Shape Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">Developer Tool</p>
+      <h1>Paint Overlays Shape Editor</h1>
+    </div>
+    <div class="actions">
+      <button id="reloadButton" type="button">Reload</button>
+      <button id="saveButton" type="button" class="primary">Save Catalog</button>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <label for="shapeList">Shape</label>
+      <select id="shapeList" size="20"></select>
+      <button id="addMissingButton" type="button">Add Missing Enum Shapes</button>
+      <p id="status" role="status"></p>
+    </aside>
+
+    <section class="preview-card">
+      <div class="toolbar">
+        <label><input id="fillableInput" type="checkbox"> Fillable</label>
+        <label>Stroke <input id="strokeInput" type="color" value="#f5d36b"></label>
+        <label>Fill <input id="fillInput" type="color" value="#2f7d57"></label>
+      </div>
+      <div class="toolbar edit-tools">
+        <button id="addPointButton" type="button">Add Point After Selection</button>
+        <button id="removePointButton" type="button">Remove Selected Point</button>
+        <button id="deleteLineButton" type="button">Delete Selected Line</button>
+      </div>
+      <div class="toolbar edit-tools">
+        <button id="mirrorLeftButton" type="button">Fix Left, Mirror Right</button>
+        <button id="mirrorRightButton" type="button">Fix Right, Mirror Left</button>
+      </div>
+      <svg id="preview" viewBox="0 0 400 400" aria-label="Shape preview"></svg>
+      <p class="hint">Click or drag a gold point to select it. Click a line to select that connection, then delete it to split the path.</p>
+    </section>
+
+    <section class="editor-card">
+      <label for="commandsInput">Selected Shape JSON</label>
+      <textarea id="commandsInput" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="applyButton" type="button">Apply to Preview</button>
+        <button id="formatButton" type="button">Format</button>
+      </div>
+      <p class="hint">Supported ops: move, line, quad, cubic, close, rect, ellipse, polygon.</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

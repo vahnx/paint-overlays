@@ -97,4 +97,34 @@ public class PaintPersistenceTest
         assertEquals(PaintMath.sanitizePendingText(source), reloaded.texts.get(0).text);
         assertEquals(PaintMath.MAX_TEXT_LENGTH, reloaded.texts.get(0).text.length());
     }
+
+    @Test
+    public void unsupportedStampTypesCanBePreservedForFallbackRendering()
+    {
+        String legacyJson = "{"
+            + "\"strokes\":[],"
+            + "\"shapes\":[],"
+            + "\"stamps\":[{"
+            + "\"plane\":0,"
+            + "\"worldX\":3200,"
+            + "\"worldY\":3200,"
+            + "\"offsetX\":64,"
+            + "\"offsetY\":64,"
+            + "\"size\":40,"
+            + "\"stampType\":\"OLD_REMOVED_STAMP\""
+            + "}],"
+            + "\"texts\":[]"
+            + "}";
+
+        PaintChunkData chunk = GSON.fromJson(legacyJson, PaintChunkData.class);
+        assertEquals(1, chunk.stamps.size());
+        chunk.stamps.get(0).unsupportedStampType = "OLD_REMOVED_STAMP";
+        chunk.stamps.removeIf(stamp -> stamp == null
+            || (stamp.stampType == null && (stamp.unsupportedStampType == null || stamp.unsupportedStampType.trim().isEmpty()))
+            || stamp.size < 4);
+
+        assertEquals(1, chunk.stamps.size());
+        assertEquals("OLD_REMOVED_STAMP", chunk.stamps.get(0).unsupportedStampType);
+        assertFalse(chunk.isEmpty());
+    }
 }

@@ -1,25 +1,37 @@
 package com.paintoverlays;
 
 import java.awt.BorderLayout;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.awt.GridLayout;
+import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
+import javax.swing.ImageIcon;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
 import javax.swing.JSlider;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.border.Border;
@@ -35,31 +47,45 @@ class PaintOverlaysPanel extends PluginPanel
     private static final int DEFAULT_BRUSH_SLIDER_MAX = 12;
     private static final int DEFAULT_TEXT_SLIDER_MAX = 200;
     private static final int DEFAULT_SHAPE_SLIDER_MAX = 200;
+    private static final Dimension SIZE_FIELD_DIMENSION = new Dimension(34, 24);
+    private static final Dimension ROW_LABEL_DIMENSION = new Dimension(42, 24);
+    private static final Dimension WIDE_ROW_LABEL_DIMENSION = new Dimension(74, 24);
 
     private final PaintOverlaysPlugin plugin;
     private final ColorPickerManager colorPickerManager;
 
-    private final JComboBox<PaintShapeType> shapeTypeBox = new JComboBox<>(PaintShapeType.values());
-    private final JComboBox<PaintFontStyle> fontBox = new JComboBox<>(PaintFontStyle.values());
-    private final JComboBox<PaintFrameStyle> frameStyleBox = new JComboBox<>(PaintFrameStyle.values());
+    private final javax.swing.JComboBox<PaintFontStyle> fontBox = new javax.swing.JComboBox<>(PaintFontStyle.values());
+    private final javax.swing.JComboBox<PaintFrameStyle> frameStyleBox = new javax.swing.JComboBox<>(PaintFrameStyle.values());
     private final JToggleButton brushButton = new JToggleButton("Brush");
-    private final JToggleButton shapeButton = new JToggleButton("Shape");
+    private final JToggleButton shapesButton = new JToggleButton("Shapes");
     private final JToggleButton textButton = new JToggleButton("Text");
     private final JToggleButton eraserButton = new JToggleButton("Eraser");
     private final JButton colorButton = new JButton("Pick Color");
     private final JButton textBackgroundColorButton = new JButton("Pick Background");
     private final JButton textBorderColorButton = new JButton("Pick Border");
+    private final JCheckBox textSpeechBubbleCheck = new JCheckBox("Speech Bubble");
     private final JButton frameColorButton = new JButton("Pick Frame");
     private final JCheckBox frameRainbowCheck = new JCheckBox("Rainbow");
     private final JSlider sizeSlider = new JSlider(1, DEFAULT_TEXT_SLIDER_MAX, 16);
     private final JTextField textField = new JTextField();
     private final JTextField sizeField = new JTextField(4);
+    private final RotationDial rotationDial = new RotationDial();
+    private final JLabel rotationLabel = new JLabel("0 deg");
+    private final JLabel rotationPreviewLabel = new JLabel();
+    private final JCheckBox flipHorizontalCheck = new JCheckBox("Flip");
     private final JLabel statusLabel = new JLabel();
     private final JLabel hintLabel = new JLabel();
     private final JButton undoButton = new JButton();
     private final JButton clearButton = new JButton();
     private final JButton drawingTestButton = new JButton("Generate Drawing Test");
+    private final JCheckBox shapeFillCheck = new JCheckBox("Fill");
+    private final JPanel shapeOptionsRow;
+    private final JPanel rotationRow;
+    private final JPanel textSection;
     private RuneliteColorPicker activeColorPicker;
+    private JDialog activeAssetPicker;
+    private int shapePickerScrollY;
+    private int stampPickerScrollY;
     private boolean refreshing;
     private PaintTool displayedTool;
     private boolean toolRequestPending;
@@ -95,21 +121,25 @@ class PaintOverlaysPanel extends PluginPanel
         drawingSection.add(fullWidthRow(toolButtonRow()));
         drawingSection.add(row("Color", colorButton));
         drawingSection.add(row("Size", sharedSizeRow()));
-        drawingSection.add(row("Shape", shapeTypeBox));
+        rotationRow = row("Rotate", rotationControl());
+        drawingSection.add(rotationRow);
+        shapeOptionsRow = fullWidthRow(shapeOptionsControl());
+        drawingSection.add(shapeOptionsRow);
         content.add(drawingSection);
 
-        JPanel textSection = sectionPanel("Text");
+        textSection = sectionPanel("Text");
         textField.setText(plugin.getPendingText());
         textSection.add(row("Font", fontBox));
         textSection.add(row("Text", textField));
         textSection.add(row("Background", textBackgroundColorButton));
         textSection.add(row("Border", textBorderColorButton));
+        textSection.add(fullWidthRow(textSpeechBubbleCheck));
         content.add(textSection);
 
         JPanel frameSection = sectionPanel("Frame");
-        frameSection.add(row("Frame Style", frameStyleBox));
-        frameSection.add(row("Frame FX", frameRainbowCheck));
-        frameSection.add(row("Frame", frameColorButton));
+        frameSection.add(wideRow("Frame Style", frameStyleBox));
+        frameSection.add(wideRow("Frame FX", frameRainbowCheck));
+        frameSection.add(wideRow("Frame", frameColorButton));
         content.add(frameSection);
 
         undoButton.addActionListener(e -> plugin.undoLastAction());
@@ -178,13 +208,6 @@ class PaintOverlaysPanel extends PluginPanel
                 plugin.setFontStyle((PaintFontStyle) fontBox.getSelectedItem());
             }
         });
-        shapeTypeBox.addActionListener(e ->
-        {
-            if (!refreshing)
-            {
-                plugin.setShapeType((PaintShapeType) shapeTypeBox.getSelectedItem());
-            }
-        });
         frameStyleBox.addActionListener(e ->
         {
             if (!refreshing)
@@ -204,6 +227,29 @@ class PaintOverlaysPanel extends PluginPanel
             if (!refreshing)
             {
                 plugin.setFrameRainbowEnabled(frameRainbowCheck.isSelected());
+            }
+        });
+        shapeFillCheck.addActionListener(e ->
+        {
+            if (!refreshing)
+            {
+                plugin.setShapeFillEnabled(shapeFillCheck.isSelected());
+            }
+        });
+        flipHorizontalCheck.addActionListener(e ->
+        {
+            if (!refreshing)
+            {
+                plugin.setShapeFlipHorizontal(flipHorizontalCheck.isSelected());
+            }
+        });
+        textSpeechBubbleCheck.addActionListener(e ->
+        {
+            if (!refreshing)
+            {
+                plugin.setTextFrameStyle(textSpeechBubbleCheck.isSelected()
+                    ? PaintTextFrameStyle.SPEECH_BUBBLE
+                    : PaintTextFrameStyle.RECTANGLE);
             }
         });
         textField.getDocument().addDocumentListener(new DocumentListener()
@@ -257,6 +303,7 @@ class PaintOverlaysPanel extends PluginPanel
         };
         sizeField.addFocusListener(reconcileEditedField);
         textField.addFocusListener(reconcileEditedField);
+        rotationDial.setRotationChangeListener(plugin::setShapeRotationDegrees);
 
         refreshState(initialState);
     }
@@ -279,9 +326,9 @@ class PaintOverlaysPanel extends PluginPanel
                 toolRequestPending = false;
             }
             setSelectedToolButton(displayedTool);
-            shapeTypeBox.setSelectedItem(state.shapeType);
             fontBox.setSelectedItem(state.fontStyle);
             frameStyleBox.setSelectedItem(state.frameStyle);
+            shapeFillCheck.setSelected(state.shapeFillEnabled);
             PaintTool effectiveTool = toolRequestPending ? displayedTool : state.tool;
             int selectedSize = getSelectedToolSize(state, effectiveTool);
             if (!toolRequestPending && !sizeSlider.getValueIsAdjusting())
@@ -305,17 +352,29 @@ class PaintOverlaysPanel extends PluginPanel
             syncButtonColor(colorButton, color);
             syncButtonColor(textBackgroundColorButton, opaque(state.textBackgroundColor));
             syncButtonColor(textBorderColorButton, opaque(state.textBorderColor));
+            textSpeechBubbleCheck.setSelected(state.textFrameStyle == PaintTextFrameStyle.SPEECH_BUBBLE);
             syncButtonColor(frameColorButton, opaque(state.frameColor));
             frameRainbowCheck.setSelected(state.frameRainbowEnabled);
             boolean editingAvailable = state.editingAvailable;
             boolean textTool = effectiveTool == PaintTool.TEXT;
             boolean shapeTool = effectiveTool == PaintTool.SHAPE;
+            boolean stampTool = effectiveTool == PaintTool.STAMP;
             boolean sizeEnabled = editingAvailable && effectiveTool != null;
             brushButton.setEnabled(editingAvailable);
-            shapeButton.setEnabled(editingAvailable);
+            shapesButton.setEnabled(editingAvailable);
             textButton.setEnabled(editingAvailable);
             eraserButton.setEnabled(editingAvailable);
-            shapeTypeBox.setEnabled(editingAvailable && shapeTool);
+            rotationRow.setVisible(shapeTool || stampTool);
+            rotationDial.setEnabled(editingAvailable && (shapeTool || stampTool));
+            rotationDial.setRotationDegrees(state.shapeRotationDegrees);
+            rotationLabel.setText(state.shapeRotationDegrees + " deg");
+            rotationPreviewLabel.setIcon(new ImageIcon(createRotationPreview(state, effectiveTool)));
+            shapeOptionsRow.setVisible(shapeTool || stampTool);
+            shapeFillCheck.setVisible(shapeTool);
+            shapeFillCheck.setEnabled(editingAvailable && shapeTool && PaintMath.canFillShape(state.shapeType));
+            flipHorizontalCheck.setEnabled(editingAvailable && (shapeTool || stampTool));
+            flipHorizontalCheck.setSelected(state.shapeFlipHorizontal);
+            textSection.setVisible(textTool);
             fontBox.setEnabled(editingAvailable && textTool);
             frameStyleBox.setEnabled(editingAvailable);
             frameRainbowCheck.setEnabled(editingAvailable);
@@ -324,7 +383,8 @@ class PaintOverlaysPanel extends PluginPanel
             textField.setEnabled(editingAvailable && textTool);
             textBackgroundColorButton.setEnabled(editingAvailable && textTool);
             textBorderColorButton.setEnabled(editingAvailable && textTool);
-            colorButton.setEnabled(editingAvailable && effectiveTool != PaintTool.ERASER);
+            textSpeechBubbleCheck.setEnabled(editingAvailable && textTool);
+            colorButton.setEnabled(editingAvailable && effectiveTool != PaintTool.ERASER && !stampTool);
             frameColorButton.setEnabled(editingAvailable && !state.frameRainbowEnabled);
             undoButton.setText(plugin.getUndoActionText());
             undoButton.setEnabled(editingAvailable && state.undoAvailable);
@@ -333,6 +393,7 @@ class PaintOverlaysPanel extends PluginPanel
             drawingTestButton.setEnabled(state.drawingTestAvailable);
             statusLabel.setText(html(state.inputStatusText));
             hintLabel.setText(buildHintText(state, effectiveTool));
+            revalidate();
         }
         finally
         {
@@ -343,9 +404,39 @@ class PaintOverlaysPanel extends PluginPanel
     private void configureToolButtons()
     {
         configureToolButton(brushButton, PaintTool.BRUSH);
-        configureToolButton(shapeButton, PaintTool.SHAPE);
+        configureShapesButton();
         configureToolButton(textButton, PaintTool.TEXT);
         configureToolButton(eraserButton, PaintTool.ERASER);
+    }
+
+    private void configureShapesButton()
+    {
+        shapesButton.addActionListener(e ->
+        {
+            if (refreshing)
+            {
+                return;
+            }
+
+            closeActiveColorPicker();
+            if (displayedTool == PaintTool.SHAPE || displayedTool == PaintTool.STAMP)
+            {
+                if (activeAssetPicker != null)
+                {
+                    closeActiveAssetPickerAndFocusCanvas();
+                    return;
+                }
+
+                SwingUtilities.invokeLater(this::openAssetPicker);
+                return;
+            }
+
+            displayedTool = PaintTool.SHAPE;
+            toolRequestPending = true;
+            setSelectedToolButton(displayedTool);
+            pendingToolRequestId = plugin.requestPanelToolChange(PaintTool.SHAPE);
+            SwingUtilities.invokeLater(this::openAssetPicker);
+        });
     }
 
     private void configureToolButton(JToggleButton button, PaintTool tool)
@@ -372,11 +463,11 @@ class PaintOverlaysPanel extends PluginPanel
         panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         Dimension toolSize = new Dimension(110, 32);
         brushButton.setPreferredSize(toolSize);
-        shapeButton.setPreferredSize(toolSize);
+        shapesButton.setPreferredSize(toolSize);
         textButton.setPreferredSize(toolSize);
         eraserButton.setPreferredSize(toolSize);
         panel.add(brushButton);
-        panel.add(shapeButton);
+        panel.add(shapesButton);
         panel.add(textButton);
         panel.add(eraserButton);
         return panel;
@@ -385,7 +476,7 @@ class PaintOverlaysPanel extends PluginPanel
     private void setSelectedToolButton(PaintTool tool)
     {
         brushButton.setSelected(tool == PaintTool.BRUSH);
-        shapeButton.setSelected(tool == PaintTool.SHAPE);
+        shapesButton.setSelected(tool == PaintTool.SHAPE || tool == PaintTool.STAMP);
         textButton.setSelected(tool == PaintTool.TEXT);
         eraserButton.setSelected(tool == PaintTool.ERASER);
 
@@ -397,7 +488,8 @@ class PaintOverlaysPanel extends PluginPanel
         switch (tool)
         {
             case SHAPE:
-                shapeButton.setSelected(true);
+            case STAMP:
+                shapesButton.setSelected(true);
                 break;
             case TEXT:
                 textButton.setSelected(true);
@@ -416,8 +508,38 @@ class PaintOverlaysPanel extends PluginPanel
     {
         JPanel panel = new JPanel(new BorderLayout(8, 0));
         panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        sizeField.setPreferredSize(SIZE_FIELD_DIMENSION);
+        sizeField.setMinimumSize(SIZE_FIELD_DIMENSION);
+        sizeField.setMaximumSize(SIZE_FIELD_DIMENSION);
+        sizeField.setHorizontalAlignment(JTextField.CENTER);
         panel.add(sizeSlider, BorderLayout.CENTER);
         panel.add(sizeField, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JPanel rotationControl()
+    {
+        JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        rotationLabel.setForeground(Color.WHITE);
+        rotationLabel.setPreferredSize(new Dimension(48, 24));
+        rotationPreviewLabel.setPreferredSize(new Dimension(44, 44));
+        rotationPreviewLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        panel.add(rotationDial, BorderLayout.CENTER);
+        JPanel eastPanel = new JPanel(new BorderLayout(4, 0));
+        eastPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        eastPanel.add(rotationPreviewLabel, BorderLayout.CENTER);
+        eastPanel.add(rotationLabel, BorderLayout.EAST);
+        panel.add(eastPanel, BorderLayout.EAST);
+        return panel;
+    }
+
+    private JPanel shapeOptionsControl()
+    {
+        JPanel panel = new JPanel(new GridLayout(1, 2, 8, 0));
+        panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        panel.add(shapeFillCheck);
+        panel.add(flipHorizontalCheck);
         return panel;
     }
 
@@ -461,6 +583,7 @@ class PaintOverlaysPanel extends PluginPanel
 
         switch (tool)
         {
+            case STAMP:
             case SHAPE:
                 plugin.setShapeSize(value);
                 break;
@@ -477,7 +600,7 @@ class PaintOverlaysPanel extends PluginPanel
 
     private static int getSelectedToolSize(PaintPanelState state, PaintTool tool)
     {
-        if (tool == PaintTool.SHAPE)
+        if (tool == PaintTool.SHAPE || tool == PaintTool.STAMP)
         {
             return state.shapeSize;
         }
@@ -494,7 +617,7 @@ class PaintOverlaysPanel extends PluginPanel
 
     private static int getSelectedSizeMinimum(PaintTool tool)
     {
-        if (tool == PaintTool.SHAPE)
+        if (tool == PaintTool.SHAPE || tool == PaintTool.STAMP)
         {
             return 4;
         }
@@ -503,7 +626,7 @@ class PaintOverlaysPanel extends PluginPanel
 
     private static int getSelectedSizeSliderMaximum(PaintTool tool)
     {
-        if (tool == PaintTool.SHAPE)
+        if (tool == PaintTool.SHAPE || tool == PaintTool.STAMP)
         {
             return DEFAULT_SHAPE_SLIDER_MAX;
         }
@@ -561,15 +684,379 @@ class PaintOverlaysPanel extends PluginPanel
         picker.dispose();
     }
 
+    private void openAssetPicker()
+    {
+        closeActiveAssetPicker();
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), "Paint Shapes");
+        activeAssetPicker = dialog;
+
+        JPanel content = new JPanel(new GridLayout(1, 2, 12, 0));
+        content.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        content.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+        PaintTool selectedAssetTool = plugin.getTool();
+        PaintShapeType selectedShapeType = plugin.getShapeType();
+        PaintStampType selectedStampType = plugin.getStampType();
+        JButton selectedAssetButton = null;
+
+        JPanel shapeGrid = assetGrid("Shapes");
+        for (PaintShapeType type : PaintShapeType.values())
+        {
+            if (!shouldShowShapeInPicker(type))
+            {
+                continue;
+            }
+
+            JButton button = assetButton(type.toString(), createShapePreview(type, 40));
+            if (selectedAssetTool == PaintTool.SHAPE && type == selectedShapeType)
+            {
+                selectedAssetButton = button;
+            }
+            button.addActionListener(e ->
+            {
+                plugin.setShapeType(type);
+                displayedTool = PaintTool.SHAPE;
+                toolRequestPending = true;
+                setSelectedToolButton(PaintTool.SHAPE);
+                pendingToolRequestId = plugin.requestPanelToolChange(PaintTool.SHAPE);
+                closeActiveAssetPicker();
+                SwingUtilities.invokeLater(plugin::focusGameCanvasForEditing);
+            });
+            shapeGrid.add(button);
+        }
+
+        JPanel stampGrid = assetGrid("Stamps");
+        for (PaintStampType type : PaintStampType.values())
+        {
+            boolean locked = isStampLocked(type);
+            JButton button = assetButton(type.toString(), stampButtonPreview(type, locked));
+            if (selectedAssetTool == PaintTool.STAMP && type == selectedStampType)
+            {
+                selectedAssetButton = button;
+            }
+            button.setEnabled(!locked);
+            if (!locked)
+            {
+                button.addActionListener(e ->
+                {
+                    plugin.setStampType(type);
+                    displayedTool = PaintTool.STAMP;
+                    toolRequestPending = true;
+                    setSelectedToolButton(PaintTool.STAMP);
+                    pendingToolRequestId = plugin.requestPanelToolChange(PaintTool.STAMP);
+                    closeActiveAssetPicker();
+                    SwingUtilities.invokeLater(plugin::focusGameCanvasForEditing);
+                });
+            }
+            stampGrid.add(button);
+        }
+
+        JScrollPane shapeScrollPane = assetScrollPane(shapeGrid);
+        JScrollPane stampScrollPane = assetScrollPane(stampGrid);
+        int savedShapeScrollY = shapePickerScrollY;
+        int savedStampScrollY = stampPickerScrollY;
+        content.add(shapeScrollPane);
+        content.add(stampScrollPane);
+        dialog.setContentPane(content);
+        dialog.getRootPane().registerKeyboardAction(
+            event -> closeActiveAssetPickerAndFocusCanvas(),
+            KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
+            JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.addWindowListener(new WindowAdapter()
+        {
+            @Override
+            public void windowClosing(WindowEvent event)
+            {
+                if (activeAssetPicker == dialog)
+                {
+                    activeAssetPicker = null;
+                }
+            }
+
+            @Override
+            public void windowClosed(WindowEvent event)
+            {
+                if (activeAssetPicker == dialog)
+                {
+                    activeAssetPicker = null;
+                }
+            }
+        });
+        dialog.setVisible(true);
+        restoreAssetPickerScroll(
+            shapeScrollPane,
+            stampScrollPane,
+            savedShapeScrollY,
+            savedStampScrollY,
+            selectedAssetButton,
+            selectedAssetTool == PaintTool.SHAPE);
+    }
+
+    private static JPanel assetGrid(String title)
+    {
+        JPanel panel = new JPanel(new GridLayout(0, 3, 8, 8));
+        panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createTitledBorder(BorderFactory.createLineBorder(ColorScheme.MEDIUM_GRAY_COLOR), title),
+            BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+        return panel;
+    }
+
+    private static JScrollPane assetScrollPane(JPanel grid)
+    {
+        JScrollPane scrollPane = new JScrollPane(
+            grid,
+            JScrollPane.VERTICAL_SCROLLBAR_ALWAYS,
+            JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.setPreferredSize(new Dimension(360, 360));
+        scrollPane.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+        return scrollPane;
+    }
+
+    private static JButton assetButton(String text, BufferedImage image)
+    {
+        JButton button = new JButton(assetButtonText(text), new ImageIcon(image));
+        button.setToolTipText(text);
+        button.setHorizontalTextPosition(SwingConstants.CENTER);
+        button.setVerticalTextPosition(SwingConstants.BOTTOM);
+        button.setPreferredSize(new Dimension(104, 78));
+        return button;
+    }
+
+    private void restoreAssetPickerScroll(
+        JScrollPane shapeScrollPane,
+        JScrollPane stampScrollPane,
+        int savedShapeScrollY,
+        int savedStampScrollY,
+        JButton selectedAssetButton,
+        boolean selectedAssetIsShape)
+    {
+        SwingUtilities.invokeLater(() ->
+        {
+            shapeScrollPane.getVerticalScrollBar().setValue(savedShapeScrollY);
+            stampScrollPane.getVerticalScrollBar().setValue(savedStampScrollY);
+
+            int selectedScrollY = selectedAssetIsShape ? savedShapeScrollY : savedStampScrollY;
+            if (selectedScrollY <= 0)
+            {
+                focusSelectedAssetButton(selectedAssetButton);
+            }
+
+            shapePickerScrollY = shapeScrollPane.getVerticalScrollBar().getValue();
+            stampPickerScrollY = stampScrollPane.getVerticalScrollBar().getValue();
+            shapeScrollPane.getVerticalScrollBar().addAdjustmentListener(event -> shapePickerScrollY = event.getValue());
+            stampScrollPane.getVerticalScrollBar().addAdjustmentListener(event -> stampPickerScrollY = event.getValue());
+        });
+    }
+
+    private static void focusSelectedAssetButton(JButton selectedButton)
+    {
+        if (selectedButton != null)
+        {
+            selectedButton.scrollRectToVisible(new java.awt.Rectangle(
+                0,
+                0,
+                selectedButton.getWidth(),
+                selectedButton.getHeight()));
+            selectedButton.requestFocusInWindow();
+        }
+    }
+
+    private boolean isStampLocked(PaintStampType type)
+    {
+        return !plugin.areStampsUnlocked()
+            && type != PaintStampType.CHICKEN
+            && type != PaintStampType.DELRITH;
+    }
+
+    private static BufferedImage stampButtonPreview(PaintStampType type, boolean locked)
+    {
+        BufferedImage preview = PaintStamps.createPreview(type, 40);
+        if (!locked || preview == null)
+        {
+            return preview;
+        }
+
+        BufferedImage lockedPreview = new BufferedImage(preview.getWidth(), preview.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = lockedPreview.createGraphics();
+        try
+        {
+            graphics.drawImage(preview, 0, 0, null);
+            graphics.setColor(new Color(0, 0, 0, 125));
+            graphics.fillRect(0, 0, preview.getWidth(), preview.getHeight());
+            graphics.setColor(new Color(230, 230, 230, 230));
+            graphics.fillRoundRect(3, 10, 13, 11, 3, 3);
+            graphics.setStroke(new BasicStroke(2f));
+            graphics.drawArc(5, 2, 9, 12, 0, 180);
+        }
+        finally
+        {
+            graphics.dispose();
+        }
+        return lockedPreview;
+    }
+
+    private static String assetButtonText(String text)
+    {
+        if (text == null || text.length() <= 12)
+        {
+            return text;
+        }
+
+        int splitIndex = text.lastIndexOf(' ', 12);
+        if (splitIndex <= 0)
+        {
+            return text.substring(0, 11) + "...";
+        }
+        return "<html><center>"
+            + text.substring(0, splitIndex)
+            + "<br>"
+            + text.substring(splitIndex + 1)
+            + "</center></html>";
+    }
+
+    private static BufferedImage createShapePreview(PaintShapeType type, int size)
+    {
+        return createShapePreview(type, size, 0);
+    }
+
+    private static BufferedImage createShapePreview(PaintShapeType type, int size, int rotationDegrees)
+    {
+        BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = image.createGraphics();
+        try
+        {
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setColor(new Color(0x26FF00));
+            graphics.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            Shape outline = PaintMath.shapeOutline(new net.runelite.api.Point(size / 2, size / 2), size - 8, type);
+            if (outline != null)
+            {
+                graphics.rotate(Math.toRadians(rotationDegrees), size / 2.0, size / 2.0);
+                graphics.draw(outline);
+            }
+        }
+        finally
+        {
+            graphics.dispose();
+        }
+        return image;
+    }
+
+    private static BufferedImage createRotationPreview(PaintPanelState state, PaintTool effectiveTool)
+    {
+        int size = 40;
+        if (effectiveTool == PaintTool.STAMP)
+        {
+            BufferedImage source = PaintStamps.getImage(state.stampType);
+            BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+            if (source == null)
+            {
+                return image;
+            }
+
+            Graphics2D graphics = image.createGraphics();
+            try
+            {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+                applyPreviewTransform(graphics, size, state.shapeRotationDegrees, state.shapeFlipHorizontal);
+                graphics.drawImage(source, 4, 4, size - 8, size - 8, null);
+            }
+            finally
+            {
+                graphics.dispose();
+            }
+            return image;
+        }
+
+        if (effectiveTool == PaintTool.SHAPE)
+        {
+            BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D graphics = image.createGraphics();
+            try
+            {
+                graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                graphics.setColor(new Color(0x26FF00));
+                graphics.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                Shape outline = PaintMath.shapeOutline(new net.runelite.api.Point(size / 2, size / 2), size - 8, state.shapeType);
+                if (outline != null)
+                {
+                    applyPreviewTransform(graphics, size, state.shapeRotationDegrees, state.shapeFlipHorizontal);
+                    graphics.draw(outline);
+                }
+            }
+            finally
+            {
+                graphics.dispose();
+            }
+            return image;
+        }
+
+        return new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+    }
+
+    private static void applyPreviewTransform(Graphics2D graphics, int size, int rotationDegrees, boolean flipHorizontal)
+    {
+        graphics.translate(size / 2.0, size / 2.0);
+        graphics.rotate(Math.toRadians(rotationDegrees));
+        if (flipHorizontal)
+        {
+            graphics.scale(-1.0, 1.0);
+        }
+        graphics.translate(-size / 2.0, -size / 2.0);
+    }
+
+    private static boolean shouldShowShapeInPicker(PaintShapeType type)
+    {
+        return type != PaintShapeType.LOBSTER
+            && type != PaintShapeType.DRAGON;
+    }
+
+    boolean closeActiveAssetPickerIfOpen()
+    {
+        JDialog dialog = activeAssetPicker;
+        activeAssetPicker = null;
+        if (dialog == null)
+        {
+            return false;
+        }
+
+        dialog.setVisible(false);
+        dialog.dispose();
+        return true;
+    }
+
+    private void closeActiveAssetPicker()
+    {
+        closeActiveAssetPickerIfOpen();
+    }
+
+    private void closeActiveAssetPickerAndFocusCanvas()
+    {
+        if (closeActiveAssetPickerIfOpen())
+        {
+            SwingUtilities.invokeLater(plugin::focusGameCanvasForEditing);
+        }
+    }
+
     void disposePanel()
     {
         if (SwingUtilities.isEventDispatchThread())
         {
             closeActiveColorPicker();
+            closeActiveAssetPicker();
             return;
         }
 
-        SwingUtilities.invokeLater(this::closeActiveColorPicker);
+        SwingUtilities.invokeLater(() ->
+        {
+            closeActiveColorPicker();
+            closeActiveAssetPicker();
+        });
     }
 
     private ClearScope promptClearScope()
@@ -639,13 +1126,23 @@ class PaintOverlaysPanel extends PluginPanel
 
     private static JPanel row(String labelText, Component component)
     {
+        return row(labelText, component, ROW_LABEL_DIMENSION);
+    }
+
+    private static JPanel wideRow(String labelText, Component component)
+    {
+        return row(labelText, component, WIDE_ROW_LABEL_DIMENSION);
+    }
+
+    private static JPanel row(String labelText, Component component, Dimension labelDimension)
+    {
         JPanel panel = new JPanel(new BorderLayout(8, 0));
         panel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
 
         JLabel label = new JLabel(labelText);
         label.setForeground(Color.WHITE);
-        label.setPreferredSize(new Dimension(68, 24));
+        label.setPreferredSize(labelDimension);
 
         panel.add(label, BorderLayout.WEST);
         panel.add(component, BorderLayout.CENTER);
@@ -689,6 +1186,109 @@ class PaintOverlaysPanel extends PluginPanel
         return panel;
     }
 
+    private static final class RotationDial extends JPanel
+    {
+        private int rotationDegrees;
+        private java.util.function.IntConsumer rotationChangeListener;
+
+        RotationDial()
+        {
+            setPreferredSize(new Dimension(58, 58));
+            setMinimumSize(new Dimension(58, 58));
+            setOpaque(false);
+
+            MouseAdapter mouseAdapter = new MouseAdapter()
+            {
+                @Override
+                public void mousePressed(MouseEvent event)
+                {
+                    updateRotationFromMouse(event);
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent event)
+                {
+                    updateRotationFromMouse(event);
+                }
+            };
+            addMouseListener(mouseAdapter);
+            addMouseMotionListener(mouseAdapter);
+        }
+
+        void setRotationChangeListener(java.util.function.IntConsumer rotationChangeListener)
+        {
+            this.rotationChangeListener = rotationChangeListener;
+        }
+
+        void setRotationDegrees(int rotationDegrees)
+        {
+            int normalized = normalizeRotation(rotationDegrees);
+            if (this.rotationDegrees != normalized)
+            {
+                this.rotationDegrees = normalized;
+                repaint();
+            }
+        }
+
+        private void updateRotationFromMouse(MouseEvent event)
+        {
+            if (!isEnabled())
+            {
+                return;
+            }
+
+            double centerX = getWidth() / 2.0;
+            double centerY = getHeight() / 2.0;
+            double radians = Math.atan2(event.getY() - centerY, event.getX() - centerX);
+            int degrees = normalizeRotation((int) Math.round(Math.toDegrees(radians) + 90.0));
+            setRotationDegrees(degrees);
+            if (rotationChangeListener != null)
+            {
+                rotationChangeListener.accept(degrees);
+            }
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics graphics)
+        {
+            super.paintComponent(graphics);
+            Graphics2D graphics2D = (Graphics2D) graphics.create();
+            try
+            {
+                graphics2D.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int size = Math.min(getWidth(), getHeight()) - 6;
+                int left = (getWidth() - size) / 2;
+                int top = (getHeight() - size) / 2;
+                int centerX = getWidth() / 2;
+                int centerY = getHeight() / 2;
+                int radius = size / 2;
+
+                graphics2D.setColor(isEnabled() ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.DARK_GRAY_COLOR);
+                graphics2D.fillOval(left, top, size, size);
+                graphics2D.setColor(Color.WHITE);
+                graphics2D.drawOval(left, top, size, size);
+
+                double radians = Math.toRadians(rotationDegrees - 90.0);
+                int needleX = centerX + (int) Math.round(Math.cos(radians) * (radius - 6));
+                int needleY = centerY + (int) Math.round(Math.sin(radians) * (radius - 6));
+                graphics2D.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                graphics2D.setColor(isEnabled() ? new Color(0x26FF00) : Color.GRAY);
+                graphics2D.drawLine(centerX, centerY, needleX, needleY);
+                graphics2D.fillOval(centerX - 3, centerY - 3, 6, 6);
+            }
+            finally
+            {
+                graphics2D.dispose();
+            }
+        }
+
+        private static int normalizeRotation(int rotationDegrees)
+        {
+            int normalized = rotationDegrees % 360;
+            return normalized < 0 ? normalized + 360 : normalized;
+        }
+    }
+
     private static String buildHintText(PaintPanelState state, PaintTool tool)
     {
         PaintInputMode mode = state.inputMode;
@@ -719,7 +1319,12 @@ class PaintOverlaysPanel extends PluginPanel
 
         if (tool == PaintTool.SHAPE)
         {
-            return html("Left-click to place a " + state.shapeType.toString().toLowerCase() + " with the current size. Click the same tool button again or press ESC to turn drawing off.");
+            return html("Left-click to place a " + state.shapeType.toString().toLowerCase() + " with the current size. Fill applies to closed shapes only.");
+        }
+
+        if (tool == PaintTool.STAMP)
+        {
+            return html("Left-click to place a " + state.stampType.toString().toLowerCase() + " stamp with the current size. Stamps keep their built-in colors.");
         }
 
         if (tool == PaintTool.TEXT)

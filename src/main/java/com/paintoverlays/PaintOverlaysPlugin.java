@@ -1,6 +1,10 @@
 package com.paintoverlays;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.inject.Provides;
 import java.awt.BasicStroke;
 import java.awt.Color;
@@ -76,13 +80,14 @@ import net.runelite.client.ui.overlay.OverlayManager;
 @Slf4j
 @PluginDescriptor(
     name = "Paint Overlays",
-    description = "Manually paint the scene and world map with persistent strokes and text notes",
+    description = "Paint in-game or on the world map with colors, shapes and notes",
     tags = {"paint", "overlay", "map", "notes", "drawing", "marker"}
 )
 public class PaintOverlaysPlugin extends Plugin
 {
     static final int MAX_STROKES_PER_CHUNK = 300;
     static final int MAX_SHAPES_PER_CHUNK = 100;
+    static final int MAX_STAMPS_PER_CHUNK = 100;
     static final int MAX_POINTS_PER_STROKE = 512;
     static final int MAX_TEXTS_PER_CHUNK = 100;
     static final int MAX_UNDO_ACTIONS = 3;
@@ -165,6 +170,7 @@ public class PaintOverlaysPlugin extends Plugin
     private final Set<String> mapChunkKeys = new HashSet<>();
     private final Set<String> pendingChunkPersistenceKeys = new HashSet<>();
     private final Set<String> corruptChunkKeys = new HashSet<>();
+    private final Set<String> unsupportedPaintAssetMessages = new TreeSet<>();
     private final Set<String> loadingChunkKeys = new HashSet<>();
     private final Deque<PaintUndoAction> undoHistory = new ArrayDeque<>();
     private final AtomicReference<PaintPanelState> pendingPanelState = new AtomicReference<>();
@@ -185,17 +191,24 @@ public class PaintOverlaysPlugin extends Plugin
     private BufferedImage iconImage;
     private volatile PaintTool tool;
     private volatile PaintShapeType shapeType = PaintShapeType.RECTANGLE;
+    private volatile PaintStampType stampType = PaintStampType.JAD;
     private volatile PaintFontStyle fontStyle = PaintFontStyle.RUNE_SCAPE;
     private volatile PaintFrameStyle frameStyle = PaintFrameStyle.SOLID;
+    private volatile PaintTextFrameStyle textFrameStyle = PaintTextFrameStyle.RECTANGLE;
     private volatile Color color = DEFAULT_COLOR;
     private volatile Color textBackgroundColor = DEFAULT_TEXT_BACKGROUND_COLOR;
     private volatile Color textBorderColor = DEFAULT_TEXT_BORDER_COLOR;
     private volatile Color frameColor = DEFAULT_FRAME_COLOR;
     private volatile int brushSize = DEFAULT_BRUSH_SIZE;
     private volatile int shapeSize = DEFAULT_SHAPE_SIZE;
+    private volatile int shapeRotationDegrees;
+    private volatile boolean shapeFlipHorizontal;
     private volatile int textSize = DEFAULT_TEXT_SIZE;
     private volatile String pendingText = "This is a sample message.";
+    private volatile boolean shapeFillEnabled;
     private volatile boolean frameRainbowEnabled = true;
+    // Dormant unlock gate for a future progression/currency system; default open for normal plugin use.
+    private volatile boolean stampsUnlocked = true;
 
     private PaintStroke activeSceneStroke;
     private PaintStroke activeMapStroke;
@@ -244,6 +257,11 @@ public class PaintOverlaysPlugin extends Plugin
     private int sceneTargetCacheCanvasWidth;
     private int sceneTargetCacheCanvasHeight;
     private int sceneTargetCacheTick;
+    private WorldView visibleSceneChunkCacheWorldView;
+    private final List<String> visibleSceneChunkCacheKeys = new ArrayList<>();
+    private int visibleSceneChunkCacheBaseX;
+    private int visibleSceneChunkCacheBaseY;
+    private int visibleSceneChunkCachePlane;
     private long chunkLoadGeneration;
 
     @Provides
@@ -340,6 +358,7 @@ public class PaintOverlaysPlugin extends Plugin
         activeMapChunkKey = null;
         lastSceneSearchTarget = null;
         invalidateSceneTargetCache();
+        invalidateVisibleSceneChunkCache();
         worldMapOpen = false;
         tool = null;
         loadedRsProfileKey = null;
@@ -435,6 +454,7 @@ public class PaintOverlaysPlugin extends Plugin
         tool = null;
         lastSceneSearchTarget = null;
         invalidateSceneTargetCache();
+        invalidateVisibleSceneChunkCache();
         if (persisted)
         {
             loadedRsProfileKey = null;
@@ -492,6 +512,16 @@ public class PaintOverlaysPlugin extends Plugin
         return shapeType;
     }
 
+    PaintStampType getStampType()
+    {
+        return stampType;
+    }
+
+    boolean isShapeFillEnabled()
+    {
+        return shapeFillEnabled;
+    }
+
     Color getColor()
     {
         return color;
@@ -507,6 +537,11 @@ public class PaintOverlaysPlugin extends Plugin
         return textBorderColor;
     }
 
+    PaintTextFrameStyle getTextFrameStyle()
+    {
+        return textFrameStyle;
+    }
+
     Color getFrameColor()
     {
         return frameColor;
@@ -520,6 +555,21 @@ public class PaintOverlaysPlugin extends Plugin
     int getShapeSize()
     {
         return shapeSize;
+    }
+
+    int getShapeRotationDegrees()
+    {
+        return shapeRotationDegrees;
+    }
+
+    boolean isShapeFlipHorizontal()
+    {
+        return shapeFlipHorizontal;
+    }
+
+    boolean areStampsUnlocked()
+    {
+        return stampsUnlocked;
     }
 
     int getTextSize()
@@ -569,7 +619,7 @@ public class PaintOverlaysPlugin extends Plugin
         refreshPanel();
         if (tool != null)
         {
-            requestClientCanvasFocus();
+            focusGameCanvasForEditing();
         }
     }
 
@@ -614,6 +664,33 @@ public class PaintOverlaysPlugin extends Plugin
         }
 
         this.shapeType = shapeType == null ? PaintShapeType.RECTANGLE : shapeType;
+        refreshPanel();
+    }
+
+    void setStampType(PaintStampType stampType)
+    {
+        if (invokeOnClientThread(() -> setStampType(stampType)))
+        {
+            return;
+        }
+
+        PaintStampType nextStampType = stampType == null ? PaintStampType.JAD : stampType;
+        if (this.stampType != nextStampType)
+        {
+            this.shapeRotationDegrees = 0;
+        }
+        this.stampType = nextStampType;
+        refreshPanel();
+    }
+
+    void setShapeFillEnabled(boolean shapeFillEnabled)
+    {
+        if (invokeOnClientThread(() -> setShapeFillEnabled(shapeFillEnabled)))
+        {
+            return;
+        }
+
+        this.shapeFillEnabled = shapeFillEnabled;
         refreshPanel();
     }
 
@@ -676,6 +753,17 @@ public class PaintOverlaysPlugin extends Plugin
         refreshPanel();
     }
 
+    void setTextFrameStyle(PaintTextFrameStyle textFrameStyle)
+    {
+        if (invokeOnClientThread(() -> setTextFrameStyle(textFrameStyle)))
+        {
+            return;
+        }
+
+        this.textFrameStyle = textFrameStyle == null ? PaintTextFrameStyle.RECTANGLE : textFrameStyle;
+        refreshPanel();
+    }
+
     void setFrameColor(Color frameColor)
     {
         if (invokeOnClientThread(() -> setFrameColor(frameColor)))
@@ -714,6 +802,28 @@ public class PaintOverlaysPlugin extends Plugin
         refreshPanel();
     }
 
+    void setShapeRotationDegrees(int shapeRotationDegrees)
+    {
+        if (invokeOnClientThread(() -> setShapeRotationDegrees(shapeRotationDegrees)))
+        {
+            return;
+        }
+
+        this.shapeRotationDegrees = normalizeRotationDegrees(shapeRotationDegrees);
+        refreshPanel();
+    }
+
+    void setShapeFlipHorizontal(boolean shapeFlipHorizontal)
+    {
+        if (invokeOnClientThread(() -> setShapeFlipHorizontal(shapeFlipHorizontal)))
+        {
+            return;
+        }
+
+        this.shapeFlipHorizontal = shapeFlipHorizontal;
+        refreshPanel();
+    }
+
     void setTextSize(int textSize)
     {
         if (invokeOnClientThread(() -> setTextSize(textSize)))
@@ -733,6 +843,13 @@ public class PaintOverlaysPlugin extends Plugin
         }
 
         String sanitized = PaintMath.sanitizePendingText(pendingText);
+        if ("!unlock_stamps".equalsIgnoreCase(sanitized.trim()))
+        {
+            stampsUnlocked = true;
+            refreshPanel();
+            return;
+        }
+
         if (!sanitized.equals(this.pendingText))
         {
             this.pendingText = sanitized;
@@ -1141,15 +1258,6 @@ public class PaintOverlaysPlugin extends Plugin
         PaintTool acceptedTool = tool;
         inputCaptureActive = true;
         awtInputGestureId = gestureId;
-        if (contextGeneration != inputContextGeneration.get())
-        {
-            if (awtInputGestureId == gestureId)
-            {
-                inputCaptureActive = false;
-                awtInputGestureId = 0L;
-            }
-            return false;
-        }
 
         java.awt.Point point = event.getPoint();
         clientThread.invoke(() -> processMousePressed(
@@ -1467,18 +1575,7 @@ public class PaintOverlaysPlugin extends Plugin
             return false;
         }
 
-        if (event.getKeyCode() == KeyEvent.VK_ESCAPE)
-        {
-            if (getInputMode() == PaintInputMode.NONE)
-            {
-                return false;
-            }
-
-            exitEditingMode();
-            return true;
-        }
-
-        if (client == null || event.getComponent() != client.getCanvas())
+        if (!isEditingAvailable())
         {
             return false;
         }
@@ -1493,7 +1590,24 @@ public class PaintOverlaysPlugin extends Plugin
             return true;
         }
 
-        return false;
+        if (event.getKeyCode() != KeyEvent.VK_ESCAPE)
+        {
+            return false;
+        }
+
+        PaintOverlaysPanel currentPanel = panel;
+        if (currentPanel != null && currentPanel.closeActiveAssetPickerIfOpen())
+        {
+            return true;
+        }
+
+        if (getInputMode() == PaintInputMode.NONE)
+        {
+            return false;
+        }
+
+        exitEditingMode();
+        return true;
     }
 
     private void processMousePressed(
@@ -1504,10 +1618,9 @@ public class PaintOverlaysPlugin extends Plugin
         java.awt.Point point)
     {
         if (gestureId <= cancelledInputGestureId
-            || contextGeneration != inputContextGeneration.get()
             || acceptedInputMode != getInputMode()
             || acceptedTool == null
-            || acceptedTool != tool)
+            || tool == null)
         {
             rejectInputGesture(gestureId);
             return;
@@ -1536,7 +1649,16 @@ public class PaintOverlaysPlugin extends Plugin
         {
             try
             {
-                handleScenePress(point);
+                PaintTool previousTool = tool;
+                tool = acceptedTool;
+                try
+                {
+                    handleScenePress(point);
+                }
+                finally
+                {
+                    tool = previousTool;
+                }
             }
             catch (RuntimeException ex)
             {
@@ -1555,7 +1677,16 @@ public class PaintOverlaysPlugin extends Plugin
 
         try
         {
-            handleMapPress(point);
+            PaintTool previousTool = tool;
+            tool = acceptedTool;
+            try
+            {
+                handleMapPress(point);
+            }
+            finally
+            {
+                tool = previousTool;
+            }
         }
         catch (RuntimeException ex)
         {
@@ -1758,40 +1889,17 @@ public class PaintOverlaysPlugin extends Plugin
     Collection<PaintChunkData> getVisibleSceneChunks()
     {
         List<PaintChunkData> visible = new ArrayList<>();
-        if (!isProfileDataCurrent() || client.getLocalPlayer() == null)
+        if (!isProfileDataCurrent())
         {
             return visible;
         }
 
-        WorldPoint location = client.getLocalPlayer().getWorldLocation();
-        if (location == null)
+        for (String key : getVisibleSceneChunkKeys())
         {
-            return visible;
-        }
-
-        int regionX = location.getX() >> 6;
-        int regionY = location.getY() >> 6;
-        int plane = location.getPlane();
-
-        for (int dx = -1; dx <= 1; dx++)
-        {
-            for (int dy = -1; dy <= 1; dy++)
+            PaintChunkData chunk = getCachedChunkForRender(sceneChunks, sceneChunkKeys, key);
+            if (chunk != null && !chunk.isEmpty())
             {
-                int rx = regionX + dx;
-                int ry = regionY + dy;
-                if (rx < 0 || ry < 0)
-                {
-                    continue;
-                }
-
-                PaintChunkData chunk = getCachedChunkForRender(
-                    sceneChunks,
-                    sceneChunkKeys,
-                    getSceneChunkKey(plane, (rx << 8) | ry));
-                if (chunk != null && !chunk.isEmpty())
-                {
-                    visible.add(chunk);
-                }
+                visible.add(chunk);
             }
         }
 
@@ -1887,6 +1995,12 @@ public class PaintOverlaysPlugin extends Plugin
             return true;
         }
 
+        if (tool == PaintTool.STAMP)
+        {
+            placeSceneStamp(target);
+            return true;
+        }
+
         if (tool == PaintTool.TEXT)
         {
             placeSceneText(target);
@@ -1921,7 +2035,7 @@ public class PaintOverlaysPlugin extends Plugin
             return true;
         }
 
-        if (tool == PaintTool.SHAPE)
+        if (tool == PaintTool.SHAPE || tool == PaintTool.STAMP)
         {
             return true;
         }
@@ -1949,6 +2063,12 @@ public class PaintOverlaysPlugin extends Plugin
         if (tool == PaintTool.SHAPE)
         {
             placeMapShape(target);
+            return true;
+        }
+
+        if (tool == PaintTool.STAMP)
+        {
+            placeMapStamp(target);
             return true;
         }
 
@@ -1985,7 +2105,7 @@ public class PaintOverlaysPlugin extends Plugin
             return true;
         }
 
-        if (tool == PaintTool.SHAPE)
+        if (tool == PaintTool.SHAPE || tool == PaintTool.STAMP)
         {
             return true;
         }
@@ -2092,6 +2212,7 @@ public class PaintOverlaysPlugin extends Plugin
         PaintText paintText = new PaintText(target, color, textSize, fontStyle,
             textBackgroundColor, textBorderColor,
             text);
+        paintText.frameStyle = textFrameStyle;
         chunk.texts.add(paintText);
         try
         {
@@ -2133,7 +2254,7 @@ public class PaintOverlaysPlugin extends Plugin
             refreshPanel();
             return;
         }
-        PaintShape paintShape = new PaintShape(target, color, shapeSize, shapeType);
+        PaintShape paintShape = new PaintShape(target, color, shapeSize, shapeRotationDegrees, shapeFlipHorizontal, shapeType, shapeFillEnabled);
         chunk.shapes.add(paintShape);
         try
         {
@@ -2149,6 +2270,50 @@ public class PaintOverlaysPlugin extends Plugin
             }
             throw ex;
         }
+        commitUndoAction(undoAction);
+        refreshPanel();
+    }
+
+    private void placeSceneStamp(PaintTarget target)
+    {
+        String key = getSceneChunkKey(target.plane, target.getRegionId());
+        if (!hasStampCapacity(sceneChunks, sceneChunkKeys, key))
+        {
+            refreshPanel();
+            return;
+        }
+
+        PaintUndoAction undoAction = beginUndoAction();
+        captureUndoSnapshot(undoAction, sceneChunks, sceneChunkKeys, key);
+        boolean chunkWasKnown = sceneChunkKeys.contains(key);
+        PaintChunkData chunk = getOrCreateChunk(sceneChunks, sceneChunkKeys, key, true);
+        if (chunk == null)
+        {
+            if (pendingUndoAction == undoAction)
+            {
+                pendingUndoAction = null;
+            }
+            refreshPanel();
+            return;
+        }
+        PaintStamp paintStamp = new PaintStamp(target, shapeSize, shapeRotationDegrees, shapeFlipHorizontal, stampType);
+        chunk.stamps.add(paintStamp);
+        try
+        {
+            saveChunk(sceneChunks, sceneChunkKeys, key);
+        }
+        catch (RuntimeException ex)
+        {
+            chunk.stamps.remove(paintStamp);
+            removeEmptyUnsavedChunk(sceneChunks, sceneChunkKeys, key, chunk, chunkWasKnown);
+            if (pendingUndoAction == undoAction)
+            {
+                pendingUndoAction = null;
+            }
+            throw ex;
+        }
+        log.debug("Placed scene stamp {} in chunk {} at {},{} plane {} size {} rotation {}",
+            stampType, key, target.worldX, target.worldY, target.plane, shapeSize, shapeRotationDegrees);
         commitUndoAction(undoAction);
         refreshPanel();
     }
@@ -2184,6 +2349,7 @@ public class PaintOverlaysPlugin extends Plugin
         PaintText paintText = new PaintText(target, color, textSize, fontStyle,
             textBackgroundColor, textBorderColor,
             text);
+        paintText.frameStyle = textFrameStyle;
         chunk.texts.add(paintText);
         try
         {
@@ -2225,7 +2391,7 @@ public class PaintOverlaysPlugin extends Plugin
             refreshPanel();
             return;
         }
-        PaintShape paintShape = new PaintShape(target, color, shapeSize, shapeType);
+        PaintShape paintShape = new PaintShape(target, color, shapeSize, shapeRotationDegrees, shapeFlipHorizontal, shapeType, shapeFillEnabled);
         chunk.shapes.add(paintShape);
         try
         {
@@ -2241,6 +2407,50 @@ public class PaintOverlaysPlugin extends Plugin
             }
             throw ex;
         }
+        commitUndoAction(undoAction);
+        refreshPanel();
+    }
+
+    private void placeMapStamp(PaintTarget target)
+    {
+        String key = getMapChunkKey(target.getRegionId());
+        if (!hasStampCapacity(mapChunks, mapChunkKeys, key))
+        {
+            refreshPanel();
+            return;
+        }
+
+        PaintUndoAction undoAction = beginUndoAction();
+        captureUndoSnapshot(undoAction, mapChunks, mapChunkKeys, key);
+        boolean chunkWasKnown = mapChunkKeys.contains(key);
+        PaintChunkData chunk = getOrCreateChunk(mapChunks, mapChunkKeys, key, true);
+        if (chunk == null)
+        {
+            if (pendingUndoAction == undoAction)
+            {
+                pendingUndoAction = null;
+            }
+            refreshPanel();
+            return;
+        }
+        PaintStamp paintStamp = new PaintStamp(target, shapeSize, shapeRotationDegrees, shapeFlipHorizontal, stampType);
+        chunk.stamps.add(paintStamp);
+        try
+        {
+            saveChunk(mapChunks, mapChunkKeys, key);
+        }
+        catch (RuntimeException ex)
+        {
+            chunk.stamps.remove(paintStamp);
+            removeEmptyUnsavedChunk(mapChunks, mapChunkKeys, key, chunk, chunkWasKnown);
+            if (pendingUndoAction == undoAction)
+            {
+                pendingUndoAction = null;
+            }
+            throw ex;
+        }
+        log.debug("Placed map stamp {} in chunk {} at {},{} plane {} size {} rotation {}",
+            stampType, key, target.worldX, target.worldY, target.plane, shapeSize, shapeRotationDegrees);
         commitUndoAction(undoAction);
         refreshPanel();
     }
@@ -2346,6 +2556,16 @@ public class PaintOverlaysPlugin extends Plugin
             }
         }
 
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp != null
+                && stamp.plane == plane
+                && boundsWithinCursorSweep(sceneStampBounds(stamp, worldView), cursorStart, cursorEnd, radius))
+            {
+                return true;
+            }
+        }
+
         for (PaintText text : chunk.texts)
         {
             if (text != null
@@ -2391,6 +2611,14 @@ public class PaintOverlaysPlugin extends Plugin
         for (PaintShape shape : chunk.shapes)
         {
             if (shape != null && boundsWithinCursorSweep(mapShapeBounds(shape), cursorStart, cursorEnd, radius))
+            {
+                return true;
+            }
+        }
+
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp != null && boundsWithinCursorSweep(mapStampBounds(stamp), cursorStart, cursorEnd, radius))
             {
                 return true;
             }
@@ -2454,6 +2682,11 @@ public class PaintOverlaysPlugin extends Plugin
                 && shape.plane == plane
                 && boundsWithinCursorSweep(sceneShapeBounds(shape, worldView), cursorStart, cursorEnd, radius));
 
+        boolean stampChanged = chunk.stamps.removeIf(stamp ->
+            stamp != null
+                && stamp.plane == plane
+                && boundsWithinCursorSweep(sceneStampBounds(stamp, worldView), cursorStart, cursorEnd, radius));
+
         boolean textChanged = chunk.texts.removeIf(text ->
             text != null
                 && text.plane == plane
@@ -2464,7 +2697,7 @@ public class PaintOverlaysPlugin extends Plugin
                     cursorEnd,
                     radius));
 
-        return changed || shapeChanged || textChanged;
+        return changed || shapeChanged || stampChanged || textChanged;
     }
 
     private boolean eraseMapFromChunk(
@@ -2498,6 +2731,9 @@ public class PaintOverlaysPlugin extends Plugin
         boolean shapeChanged = chunk.shapes.removeIf(shape ->
             shape != null && boundsWithinCursorSweep(mapShapeBounds(shape), cursorStart, cursorEnd, radius));
 
+        boolean stampChanged = chunk.stamps.removeIf(stamp ->
+            stamp != null && boundsWithinCursorSweep(mapStampBounds(stamp), cursorStart, cursorEnd, radius));
+
         boolean textChanged = chunk.texts.removeIf(text ->
             text != null
                 && mapTextWithinCursorSweep(
@@ -2507,7 +2743,7 @@ public class PaintOverlaysPlugin extends Plugin
                     cursorEnd,
                     radius));
 
-        return changed || shapeChanged || textChanged;
+        return changed || shapeChanged || stampChanged || textChanged;
     }
 
     static EraseStrokeResult eraseStroke(
@@ -3020,6 +3256,7 @@ public class PaintOverlaysPlugin extends Plugin
 
         chunk.strokes.removeIf(stroke -> stroke == null || stroke.points == null || stroke.points.isEmpty());
         chunk.shapes.removeIf(shape -> shape == null || shape.shapeType == null || shape.size < MIN_SHAPE_SIZE);
+        chunk.stamps.removeIf(stamp -> stamp == null || !hasRenderableStampType(stamp) || stamp.size < MIN_SHAPE_SIZE);
         chunk.texts.removeIf(text -> text == null || text.text == null || text.text.trim().isEmpty() || text.fontStyle == null);
     }
 
@@ -3077,6 +3314,22 @@ public class PaintOverlaysPlugin extends Plugin
         }
         cleanChunk(chunk);
         return chunk == null || chunk.shapes.size() < MAX_SHAPES_PER_CHUNK;
+    }
+
+    private boolean hasStampCapacity(Map<String, PaintChunkData> cache, Set<String> knownKeys, String key)
+    {
+        if (corruptChunkKeys.contains(key))
+        {
+            return false;
+        }
+
+        PaintChunkData chunk = getOrCreateChunk(cache, knownKeys, key, false);
+        if (corruptChunkKeys.contains(key))
+        {
+            return false;
+        }
+        cleanChunk(chunk);
+        return chunk == null || chunk.stamps.size() < MAX_STAMPS_PER_CHUNK;
     }
 
     private boolean hasTextCapacity(Map<String, PaintChunkData> cache, Set<String> knownKeys, String key)
@@ -3289,6 +3542,7 @@ public class PaintOverlaysPlugin extends Plugin
             undoHistory.clear();
             cachedUndoAvailable = false;
             invalidateSceneTargetCache();
+            invalidateVisibleSceneChunkCache();
             loadedRsProfileKey = nextRsProfileKey;
             profileReloadRetryPending = false;
             profileReloadRetryAttempts = 0;
@@ -3525,21 +3779,114 @@ public class PaintOverlaysPlugin extends Plugin
         {
             chunk.shapes = new ArrayList<>();
         }
+        if (chunk.stamps == null)
+        {
+            chunk.stamps = new ArrayList<>();
+        }
         if (chunk.texts == null)
         {
             chunk.texts = new ArrayList<>();
         }
+        captureUnsupportedPaintAssetNames(decodedJson, chunk);
         validateChunkSafety(chunk);
         normalizeChunkValues(chunk);
         chunk.normalizeLoadedState();
+        reportUnsupportedPaintAssets(chunk);
         cleanChunk(chunk);
         return chunk;
+    }
+
+    private static void captureUnsupportedPaintAssetNames(String decodedJson, PaintChunkData chunk)
+    {
+        try
+        {
+            JsonObject root = new JsonParser().parse(decodedJson).getAsJsonObject();
+            captureUnsupportedShapeNames(root.getAsJsonArray("shapes"), chunk.shapes);
+            captureUnsupportedStampNames(root.getAsJsonArray("stamps"), chunk.stamps);
+        }
+        catch (RuntimeException ignored)
+        {
+            // The normal Gson load/validation path reports malformed chunks.
+        }
+    }
+
+    private static void captureUnsupportedShapeNames(JsonArray shapes, List<PaintShape> loadedShapes)
+    {
+        if (shapes == null || loadedShapes == null)
+        {
+            return;
+        }
+
+        int limit = Math.min(shapes.size(), loadedShapes.size());
+        for (int i = 0; i < limit; i++)
+        {
+            PaintShape shape = loadedShapes.get(i);
+            String rawType = getStringMember(shapes.get(i), "shapeType");
+            if (shape != null && shape.shapeType == null)
+            {
+                shape.unsupportedShapeType = rawType;
+            }
+        }
+    }
+
+    private static void captureUnsupportedStampNames(JsonArray stamps, List<PaintStamp> loadedStamps)
+    {
+        if (stamps == null || loadedStamps == null)
+        {
+            return;
+        }
+
+        int limit = Math.min(stamps.size(), loadedStamps.size());
+        for (int i = 0; i < limit; i++)
+        {
+            PaintStamp stamp = loadedStamps.get(i);
+            String rawType = getStringMember(stamps.get(i), "stampType");
+            if (stamp != null && stamp.stampType == null)
+            {
+                stamp.unsupportedStampType = rawType;
+            }
+        }
+    }
+
+    private static String getStringMember(JsonElement element, String memberName)
+    {
+        if (element == null || !element.isJsonObject())
+        {
+            return null;
+        }
+
+        JsonElement member = element.getAsJsonObject().get(memberName);
+        return member == null || !member.isJsonPrimitive() ? null : member.getAsString();
+    }
+
+    private void reportUnsupportedPaintAssets(PaintChunkData chunk)
+    {
+        for (PaintShape shape : chunk.shapes)
+        {
+            if (shape != null && shape.shapeType == null && shape.unsupportedShapeType != null)
+            {
+                String message = "Missing shape enum " + shape.unsupportedShapeType;
+                unsupportedPaintAssetMessages.add(message);
+                log.warn(message);
+            }
+        }
+
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp != null && stamp.stampType == null && stamp.unsupportedStampType != null)
+            {
+                String message = "Missing stamp enum " + stamp.unsupportedStampType;
+                unsupportedPaintAssetMessages.add(message);
+                log.warn(message);
+            }
+        }
     }
 
     private static void validateChunkSafety(PaintChunkData chunk)
     {
         if (chunk.strokes.size() > MAX_LOADED_STROKES_PER_CHUNK
             || chunk.shapes.size() > MAX_LOADED_SHAPES_PER_CHUNK
+            || chunk.stamps.size() > MAX_LOADED_SHAPES_PER_CHUNK
             || chunk.texts.size() > MAX_LOADED_TEXTS_PER_CHUNK)
         {
             throw new IllegalArgumentException("Paint chunk exceeds safe collection limits");
@@ -3572,10 +3919,14 @@ public class PaintOverlaysPlugin extends Plugin
             if (shape != null)
             {
                 validatePlane(shape.plane);
-                if (shape.shapeType == null)
-                {
-                    throw new IllegalArgumentException("Paint shape has an unsupported type");
-                }
+            }
+        }
+
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp != null)
+            {
+                validatePlane(stamp.plane);
             }
         }
 
@@ -3631,8 +3982,22 @@ public class PaintOverlaysPlugin extends Plugin
             }
 
             shape.size = clampShapeSize(shape.size);
+            shape.rotationDegrees = normalizeRotationDegrees(shape.rotationDegrees);
             shape.offsetX = clampOffset(shape.offsetX);
             shape.offsetY = clampOffset(shape.offsetY);
+        }
+
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp == null)
+            {
+                continue;
+            }
+
+            stamp.size = clampShapeSize(stamp.size);
+            stamp.rotationDegrees = normalizeRotationDegrees(stamp.rotationDegrees);
+            stamp.offsetX = clampOffset(stamp.offsetX);
+            stamp.offsetY = clampOffset(stamp.offsetY);
         }
 
         for (PaintText text : chunk.texts)
@@ -3643,6 +4008,10 @@ public class PaintOverlaysPlugin extends Plugin
             }
 
             text.fontSize = clampTextSize(text.fontSize);
+            if (text.frameStyle == null)
+            {
+                text.frameStyle = PaintTextFrameStyle.RECTANGLE;
+            }
             text.offsetX = clampOffset(text.offsetX);
             text.offsetY = clampOffset(text.offsetY);
         }
@@ -3692,6 +4061,7 @@ public class PaintOverlaysPlugin extends Plugin
             }
         }
         persisted.shapes.addAll(chunk.shapes);
+        persisted.stamps.addAll(chunk.stamps);
         persisted.texts.addAll(chunk.texts);
         return gson.toJson(persisted);
     }
@@ -3875,6 +4245,12 @@ public class PaintOverlaysPlugin extends Plugin
         sceneTargetCacheResult = null;
     }
 
+    private void invalidateVisibleSceneChunkCache()
+    {
+        visibleSceneChunkCacheWorldView = null;
+        visibleSceneChunkCacheKeys.clear();
+    }
+
     private static double[] inverseQuad(java.awt.Polygon polygon, int mouseX, int mouseY)
     {
         double ax = polygon.xpoints[0];
@@ -4041,6 +4417,17 @@ public class PaintOverlaysPlugin extends Plugin
         }
     }
 
+    void focusGameCanvasForEditing()
+    {
+        if (tool == null || client == null || client.getCanvas() == null)
+        {
+            return;
+        }
+
+        java.awt.Canvas canvas = client.getCanvas();
+        SwingUtilities.invokeLater(canvas::requestFocusInWindow);
+    }
+
     PaintPanelState createPanelState()
     {
         PaintInputMode inputMode = getInputMode();
@@ -4057,16 +4444,21 @@ public class PaintOverlaysPlugin extends Plugin
             tool,
             inputMode,
             shapeType,
+            stampType,
             fontStyle,
             frameStyle,
+            textFrameStyle,
             color,
             textBackgroundColor,
             textBorderColor,
             frameColor,
             brushSize,
             shapeSize,
+            shapeRotationDegrees,
+            shapeFlipHorizontal,
             textSize,
             pendingText,
+            shapeFillEnabled,
             frameRainbowEnabled,
             editingAvailable,
             sceneInputAvailable,
@@ -4117,7 +4509,7 @@ public class PaintOverlaysPlugin extends Plugin
         String chunkUsage = areDebugToolsEnabled() ? getCurrentChunkUsageStatus() : null;
         if (inputMode == PaintInputMode.NONE)
         {
-            return chunkUsage == null ? "Off" : "Off | " + chunkUsage;
+            return appendUnsupportedPaintAssetStatus(chunkUsage == null ? "Off" : "Off | " + chunkUsage);
         }
 
         if (!isInputModeAvailable(inputMode))
@@ -4126,31 +4518,41 @@ public class PaintOverlaysPlugin extends Plugin
             {
                 if (!isInLoggedInGame())
                 {
-                    return chunkUsage == null
+                    return appendUnsupportedPaintAssetStatus(chunkUsage == null
                         ? "World map mode selected | available after logging in"
-                        : "World map mode selected | available after logging in | " + chunkUsage;
+                        : "World map mode selected | available after logging in | " + chunkUsage);
                 }
 
-                return chunkUsage == null
+                return appendUnsupportedPaintAssetStatus(chunkUsage == null
                     ? "World map mode selected | open the world map to paint"
-                    : "World map mode selected | open the world map to paint | " + chunkUsage;
+                    : "World map mode selected | open the world map to paint | " + chunkUsage);
             }
 
             if (!isInLoggedInGame())
             {
-                return chunkUsage == null
+                return appendUnsupportedPaintAssetStatus(chunkUsage == null
                     ? "In-Game mode selected | available after logging in"
-                    : "In-Game mode selected | available after logging in | " + chunkUsage;
+                    : "In-Game mode selected | available after logging in | " + chunkUsage);
             }
 
-            return chunkUsage == null
+            return appendUnsupportedPaintAssetStatus(chunkUsage == null
                 ? "In-Game mode selected | close the world map to paint"
-                : "In-Game mode selected | close the world map to paint | " + chunkUsage;
+                : "In-Game mode selected | close the world map to paint | " + chunkUsage);
         }
 
-        return chunkUsage == null
+        return appendUnsupportedPaintAssetStatus(chunkUsage == null
             ? inputMode + " | " + tool + " active"
-            : inputMode + " | " + tool + " active | " + chunkUsage;
+            : inputMode + " | " + tool + " active | " + chunkUsage);
+    }
+
+    private String appendUnsupportedPaintAssetStatus(String statusText)
+    {
+        if (unsupportedPaintAssetMessages.isEmpty())
+        {
+            return statusText;
+        }
+
+        return statusText + " | " + unsupportedPaintAssetMessages.iterator().next();
     }
 
     BasicStroke createFrameStroke(int strokeWidth)
@@ -4217,9 +4619,19 @@ public class PaintOverlaysPlugin extends Plugin
         return shapeBounds(toSceneCanvasPoint(worldView, shape.plane, shape.worldX, shape.worldY, shape.offsetX, shape.offsetY), shape.size);
     }
 
+    private Rectangle2D sceneStampBounds(PaintStamp stamp, WorldView worldView)
+    {
+        return shapeBounds(toSceneCanvasPoint(worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY), stamp.size);
+    }
+
     private Rectangle2D mapShapeBounds(PaintShape shape)
     {
         return shapeBounds(worldMapOverlay.toCanvasPoint(shape.worldX, shape.worldY, shape.offsetX, shape.offsetY), shape.size);
+    }
+
+    private Rectangle2D mapStampBounds(PaintStamp stamp)
+    {
+        return shapeBounds(worldMapOverlay.toCanvasPoint(stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY), stamp.size);
     }
 
     private static Rectangle2D shapeBounds(Point center, int size)
@@ -4264,6 +4676,7 @@ public class PaintOverlaysPlugin extends Plugin
             finalizePendingPaintAction();
             worldMapOverlay.resetViewState();
             worldMapOpen = currentWorldMapOpen;
+            invalidateVisibleSceneChunkCache();
             refreshPanel();
             return;
         }
@@ -4356,6 +4769,12 @@ public class PaintOverlaysPlugin extends Plugin
         return Math.min(shapeSize, MAX_SHAPE_SIZE);
     }
 
+    private static int normalizeRotationDegrees(int rotationDegrees)
+    {
+        int normalized = rotationDegrees % 360;
+        return normalized < 0 ? normalized + 360 : normalized;
+    }
+
     private String getCurrentChunkUsageStatus()
     {
         String chunkKey = worldMapOpen ? getStatusMapChunkKey() : getStatusSceneChunkKey();
@@ -4392,15 +4811,18 @@ public class PaintOverlaysPlugin extends Plugin
             return scopeLabel + " " + chunkKey
                 + " | Brush 0/" + MAX_STROKES_PER_CHUNK
                 + " | Shapes 0/" + MAX_SHAPES_PER_CHUNK
+                + " | Stamps 0/" + MAX_STAMPS_PER_CHUNK
                 + " | Text 0/" + MAX_TEXTS_PER_CHUNK;
         }
 
         int strokes = countValidStrokes(chunk);
         int shapes = countValidShapes(chunk);
+        int stamps = countValidStamps(chunk);
         int texts = countValidTexts(chunk);
         return scopeLabel + " " + chunkKey
             + " | Brush " + formatUsage(strokes, MAX_STROKES_PER_CHUNK)
             + " | Shapes " + formatUsage(shapes, MAX_SHAPES_PER_CHUNK)
+            + " | Stamps " + formatUsage(stamps, MAX_STAMPS_PER_CHUNK)
             + " | Text " + formatUsage(texts, MAX_TEXTS_PER_CHUNK);
     }
 
@@ -4443,6 +4865,30 @@ public class PaintOverlaysPlugin extends Plugin
             }
         }
         return count;
+    }
+
+    private static int countValidStamps(PaintChunkData chunk)
+    {
+        if (chunk == null || chunk.stamps == null)
+        {
+            return 0;
+        }
+
+        int count = 0;
+        for (PaintStamp stamp : chunk.stamps)
+        {
+            if (stamp != null && hasRenderableStampType(stamp) && stamp.size >= MIN_SHAPE_SIZE)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static boolean hasRenderableStampType(PaintStamp stamp)
+    {
+        return stamp.stampType != null
+            || (stamp.unsupportedStampType != null && !stamp.unsupportedStampType.trim().isEmpty());
     }
 
     private static int countValidTexts(PaintChunkData chunk)
@@ -4679,6 +5125,7 @@ public class PaintOverlaysPlugin extends Plugin
             writer.println(key
                 + " | strokes=" + chunk.strokes.size()
                 + " | shapes=" + chunk.shapes.size()
+                + " | stamps=" + chunk.stamps.size()
                 + " | texts=" + chunk.texts.size()
                 + " | rawBytes=" + rawJson.getBytes(StandardCharsets.UTF_8).length
                 + " | encodedChars=" + encoded.length()
@@ -4811,16 +5258,40 @@ public class PaintOverlaysPlugin extends Plugin
 
     private List<String> getVisibleSceneChunkKeys()
     {
-        List<String> visibleKeys = new ArrayList<>();
-        if (client.getLocalPlayer() == null)
+        WorldView worldView = client.getTopLevelWorldView();
+        if (client.getLocalPlayer() == null || worldView == null)
         {
-            return visibleKeys;
+            return Collections.emptyList();
         }
 
+        int plane = worldView.getPlane();
+        if (visibleSceneChunkCacheWorldView == worldView
+            && visibleSceneChunkCacheBaseX == worldView.getBaseX()
+            && visibleSceneChunkCacheBaseY == worldView.getBaseY()
+            && visibleSceneChunkCachePlane == plane)
+        {
+            return visibleSceneChunkCacheKeys;
+        }
+
+        Set<String> visibleKeys = new HashSet<>();
+        addPlayerNearbySceneChunkKeys(visibleKeys);
+        addLoadedSceneChunkKeys(worldView, visibleKeys);
+
+        visibleSceneChunkCacheWorldView = worldView;
+        visibleSceneChunkCacheBaseX = worldView.getBaseX();
+        visibleSceneChunkCacheBaseY = worldView.getBaseY();
+        visibleSceneChunkCachePlane = plane;
+        visibleSceneChunkCacheKeys.clear();
+        visibleSceneChunkCacheKeys.addAll(visibleKeys);
+        return visibleSceneChunkCacheKeys;
+    }
+
+    private void addPlayerNearbySceneChunkKeys(Set<String> visibleKeys)
+    {
         WorldPoint location = client.getLocalPlayer().getWorldLocation();
         if (location == null)
         {
-            return visibleKeys;
+            return;
         }
 
         int regionX = location.getX() >> 6;
@@ -4839,8 +5310,68 @@ public class PaintOverlaysPlugin extends Plugin
                 }
             }
         }
+    }
 
-        return visibleKeys;
+    private void addLoadedSceneChunkKeys(WorldView worldView, Set<String> visibleKeys)
+    {
+        Scene scene = worldView.getScene();
+        if (scene == null)
+        {
+            return;
+        }
+
+        Tile[][][] tiles = scene.getTiles();
+        int plane = worldView.getPlane();
+        if (tiles == null || plane < 0 || plane >= tiles.length)
+        {
+            return;
+        }
+
+        Tile[][] planeTiles = tiles[plane];
+        if (planeTiles == null)
+        {
+            return;
+        }
+
+        for (Tile[] column : planeTiles)
+        {
+            if (column == null)
+            {
+                continue;
+            }
+
+            for (Tile tile : column)
+            {
+                if (tile == null || tile.getRenderLevel() != plane)
+                {
+                    continue;
+                }
+
+                addSceneTileChunkKey(visibleKeys, tile);
+            }
+        }
+    }
+
+    private void addSceneTileChunkKey(Set<String> visibleKeys, Tile tile)
+    {
+        WorldPoint worldLocation = tile.getWorldLocation();
+        if (worldLocation != null)
+        {
+            visibleKeys.add(getSceneChunkKey(worldLocation.getPlane(), worldLocation.getRegionID()));
+            return;
+        }
+
+        LocalPoint localLocation = tile.getLocalLocation();
+        if (localLocation == null)
+        {
+            return;
+        }
+
+        WorldPoint instanceLocation = WorldPoint.fromLocalInstance(client, localLocation, tile.getPlane());
+        if (instanceLocation != null)
+        {
+            visibleKeys.add(getSceneChunkKey(instanceLocation.getPlane(), instanceLocation.getRegionID()));
+        }
     }
 
     private int extractSceneChunkPlane(String key)
@@ -4913,7 +5444,7 @@ public class PaintOverlaysPlugin extends Plugin
         {
             return nearby;
         }
-        return null;
+        return findAnySceneTileAtMouse(worldView, mouseX, mouseY);
     }
 
     private Tile findNearbySceneTileAtMouse(WorldView worldView, int mouseX, int mouseY)
@@ -5000,6 +5531,53 @@ public class PaintOverlaysPlugin extends Plugin
         return candidateDistanceSquared < currentBestDistanceSquared ? candidate : currentBest;
     }
 
+    private Tile findAnySceneTileAtMouse(WorldView worldView, int mouseX, int mouseY)
+    {
+        Scene scene = worldView.getScene();
+        if (scene == null)
+        {
+            return null;
+        }
+
+        Tile[][][] tiles = scene.getTiles();
+        int currentRenderLevel = worldView.getPlane();
+        if (tiles == null || currentRenderLevel < 0 || currentRenderLevel >= tiles.length)
+        {
+            return null;
+        }
+
+        Tile[][] planeTiles = tiles[currentRenderLevel];
+        if (planeTiles == null)
+        {
+            return null;
+        }
+
+        Tile bestTile = null;
+        double bestDistanceSquared = Double.MAX_VALUE;
+        for (Tile[] column : planeTiles)
+        {
+            if (column == null)
+            {
+                continue;
+            }
+
+            for (Tile tile : column)
+            {
+                if (tile == null || tile.getRenderLevel() != currentRenderLevel)
+                {
+                    continue;
+                }
+
+                bestTile = chooseCloserContainingTile(bestTile, tile, mouseX, mouseY, bestDistanceSquared);
+                if (bestTile == tile)
+                {
+                    bestDistanceSquared = distanceSquaredToTileCenter(tile, mouseX, mouseY);
+                }
+            }
+        }
+        return bestTile;
+    }
+
     private double distanceSquaredToTileCenter(Tile tile, int mouseX, int mouseY)
     {
         LocalPoint localLocation = tile.getLocalLocation();
@@ -5031,7 +5609,22 @@ public class PaintOverlaysPlugin extends Plugin
 
     private boolean isCanvasEvent(MouseEvent event)
     {
-        return event != null && event.getComponent() == client.getCanvas();
+        if (event == null || client.getCanvas() == null)
+        {
+            return false;
+        }
+
+        if (event.getComponent() == client.getCanvas())
+        {
+            return true;
+        }
+
+        java.awt.Point point = event.getPoint();
+        return point != null
+            && point.x >= 0
+            && point.y >= 0
+            && point.x < client.getCanvas().getWidth()
+            && point.y < client.getCanvas().getHeight();
     }
 
     private static PaintPoint interpolatePoint(double startX, double startY, double endX, double endY, double t)

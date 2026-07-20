@@ -1,5 +1,9 @@
 # RuneLite Plugin Development — Agent Guidelines
 
+This file is split into shared RuneLite Plugin Hub guidance and repo-specific overrides for this repository.
+
+## Shared RuneLite Rules
+
 ## Logging
 
 - Use `log.debug()` for developer/diagnostic logging.
@@ -7,7 +11,8 @@
 
 ## Threading & Concurrency
 
-- Never use `Thread.sleep()`.
+- Never use `Thread.sleep()`. Use a `ScheduledExecutorService`, RuneLite event callbacks, or other non-blocking scheduling instead.
+- Never call `Thread.interrupt()` or rely on thread interruption for normal plugin control flow.
 - Never block on `shutDown()` or `startUp()` — don't call `executor.awaitTermination()` in shutdown, just use `shutdownNow()`.
 - Never do blocking network IO or disk IO on the client thread. The OkHttp thread pool can be used for blocking network requests.
   If you need to call back into `client` from the okhttp threadpool, such as from the response queued with `enqueue()`, use `clientThread.invoke()`
@@ -26,6 +31,13 @@
 - Use `LinkBrowser` to open URLs, not `java.awt.Desktop`
 - When looking up Widgets, pass the component ID from gamevals (eg `client.getWidget(InterfaceID.DomEndLevelUi.LOOT_VALUE)`) - do not manually combine interface + component child IDs.
 - Use of Java reflection is forbidden.
+
+## Input Handling
+
+- Do not use `KeyboardFocusManager` or `KeyEventDispatcher` for plugin hotkeys. Use RuneLite input APIs instead.
+- Register plugin hotkeys through RuneLite input APIs (`KeyManager` with a `KeyListener`).
+- Never capture or consume plugin hotkeys while the user is on the login screen or otherwise not logged into the game. Login UI input must remain unaffected.
+- Treat RuneLite/Plugin Hub input restrictions as a release blocker. If a hotkey implementation bypasses normal RuneLite input handling, assume it is not acceptable until verified otherwise.
 
 ## HTTP & JSON
 
@@ -50,19 +62,11 @@
 
 ## Plugin Setup & Packaging
 
-- Rename everything from the template. Do not leave `com.customtexthighlighter`, `ExamplePlugin`, `ExampleConfig`, or `example` as the config group. Rename the package path, class names, config group, `build.gradle` group, `settings.gradle` project name, and `runelite-plugin.properties`.
+- Rename everything from the template. Do not leave template package names, class names, or placeholder config groups in place. Rename the package path, class names, config group, `build.gradle` group, `settings.gradle` project name, and `runelite-plugin.properties`.
 - Do not include a `META-INF/services/net.runelite.client.plugins.Plugin` file.
 - Do not commit build artifacts — no `.class` files, `out/` directories, or `.tmp` directories.
 - `build.gradle` must target Java 11** and match the structure of the example-plugin template.
 - Retain a permissive license, such as BSD-2.
-
-## Release Safety
-
-- `paintoverlays.debugTools=true` is for local development and testing only.
-- Never prepare, submit, or publish a Plugin Hub release with `paintoverlays.debugTools=true`.
-- If asked to prepare the project for release, release review, publishing, or handoff, first set `paintoverlays.debugTools=false`.
-- If asked to restore local debug/testing behavior, it is acceptable to set `paintoverlays.debugTools=true`, but only for non-release development work.
-- Before presenting a branch as release-ready, verify that `paintoverlays.debugTools=false`.
 
 ## Resources & Assets
 
@@ -85,6 +89,25 @@ After completing a task, do not declare it done. Instead:
 2. Instruct the user to follow the "Using Jagex Accounts" instructions found at https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts to login to the development client.
 3. Tell the user *what to test* — the specific behavior you changed, the golden path, and any edge cases worth exercising.
 4. Wait for the user to confirm the feature works in-game before considering the task complete. A clean JVM start is not a passing test.
+
+## Repo-Specific Overrides
+
+These rules are specific to this repository and should be kept separate from the shared RuneLite guidance above.
+
+## Release Safety
+
+- Debug-only JVM flags or system properties are for local development and testing only.
+- Never prepare, submit, or publish a Plugin Hub release with repo-specific debug-only flags enabled.
+- If asked to prepare the project for release, release review, publishing, or handoff, first disable any repo-specific debug-only flags.
+- If asked to restore local debug or testing behavior, it is acceptable to re-enable repo-specific debug-only flags, but only for non-release development work.
+- Before presenting a branch as release-ready, verify that repo-specific debug-only flags are disabled.
+
+## Plugin Hub Submission Workflow
+
+- Keep a fork of `runelite/plugin-hub` on your GitHub for submitting or updating this plugin's hub manifest.
+- The fork does not need continuous syncing.
+- Sync it from `runelite/plugin-hub` only when preparing a new Plugin Hub PR, or when your fork or branch is behind or conflicted.
+- The plugin source code should live in this repository; the `plugin-hub` fork is only for the manifest PR.
 
 ---
 

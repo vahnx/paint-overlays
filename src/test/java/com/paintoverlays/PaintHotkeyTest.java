@@ -20,6 +20,8 @@ public class PaintHotkeyTest
     public void escapeExitsEditingEvenWhenFocusIsNotOnCanvas() throws Exception
     {
         PaintOverlaysPlugin plugin = new PaintOverlaysPlugin();
+        setField(plugin, "client", clientWithCanvas(null, GameState.LOGGED_IN, proxy(Player.class), true));
+        setField(plugin, "loadedRsProfileKey", "profile");
         setField(plugin, "tool", PaintTool.BRUSH);
 
         KeyEvent event = new KeyEvent(

@@ -1,12 +1,13 @@
 # Paint Overlays
 
-Paint and draw text or shapes anywhere in-game or on the world map.
+Paint in-game or on the world map with colors, shapes and notes.
 
 ## Features
 
 - Painting with a brush, text, shapes and eraser, with full color and transparency
 - World map painting with the same tools
 - Deeply customizable yet simple, clean UI in the sidepanel
+- Pixel art stamps
 
 ## Usage
 
@@ -14,27 +15,33 @@ Click the sidepanel button to open the interface, then click a tool at the top t
 
 ## Screenshots
 
-![Example 1](images/po-demo.gif)
+![Sailing](images/po-sailing.png)
 
-![Example 2](images/po-ingame-tele-shortcuts.png)
+![Stamps](images/po-shapes-stamps.png)
 
-![Example 3](images/po-world-map.png)
+![Config](images/po-settings.png)
 
-![Example 4](images/po-ingame-directions.png)
+![Animated GIF Demo](images/po-demo.gif)
 
-![Example 5](images/po-world-map-2.png)
+![POH Teleport Hotkeys](images/po-ingame-tele-shortcuts.png)
 
-![Example 6](images/po-ingame-define-safezone.png)
+![Warnings](images/po-ingame-warning.png)
 
-![Example 7](images/po-ingame-shapes-text-warnings.png)
+![Directions 1](images/po-world-map.png)
 
-![Example 8](images/po-ingame-text-reminders.png)
+![Direction 2](images/po-ingame-directions.png)
 
-![Example 9](images/po-ingame-warning.png)
+![Map Overlays](images/po-world-map-2.png)
 
-![Example 10](images/po-full.png)
+![Boundaries](images/po-ingame-define-safezone.png)
 
-![Example 11](images/po-settings.png)
+![Wildy Warning](images/po-ingame-shapes-text-warnings.png)
+
+![Reminders 1](images/po-ingame-text-reminders.png)
+
+![Reminders 2](images/po-full.png)
+
+![Fun](images/po-fun-stamps.png)
 
 ## Known Issues
 

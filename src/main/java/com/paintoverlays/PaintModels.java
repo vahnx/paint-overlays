@@ -35,6 +35,7 @@ enum PaintTool
 {
     BRUSH("Brush"),
     SHAPE("Shape"),
+    STAMP("Stamp"),
     TEXT("Text"),
     ERASER("Eraser");
 
@@ -125,16 +126,21 @@ final class PaintPanelState
     final PaintTool tool;
     final PaintInputMode inputMode;
     final PaintShapeType shapeType;
+    final PaintStampType stampType;
     final PaintFontStyle fontStyle;
     final PaintFrameStyle frameStyle;
+    final PaintTextFrameStyle textFrameStyle;
     final Color color;
     final Color textBackgroundColor;
     final Color textBorderColor;
     final Color frameColor;
     final int brushSize;
     final int shapeSize;
+    final int shapeRotationDegrees;
+    final boolean shapeFlipHorizontal;
     final int textSize;
     final String pendingText;
+    final boolean shapeFillEnabled;
     final boolean frameRainbowEnabled;
     final boolean editingAvailable;
     final boolean sceneInputAvailable;
@@ -151,16 +157,21 @@ final class PaintPanelState
         PaintTool tool,
         PaintInputMode inputMode,
         PaintShapeType shapeType,
+        PaintStampType stampType,
         PaintFontStyle fontStyle,
         PaintFrameStyle frameStyle,
+        PaintTextFrameStyle textFrameStyle,
         Color color,
         Color textBackgroundColor,
         Color textBorderColor,
         Color frameColor,
         int brushSize,
         int shapeSize,
+        int shapeRotationDegrees,
+        boolean shapeFlipHorizontal,
         int textSize,
         String pendingText,
+        boolean shapeFillEnabled,
         boolean frameRainbowEnabled,
         boolean editingAvailable,
         boolean sceneInputAvailable,
@@ -176,16 +187,21 @@ final class PaintPanelState
         this.tool = tool;
         this.inputMode = inputMode;
         this.shapeType = shapeType;
+        this.stampType = stampType;
         this.fontStyle = fontStyle;
         this.frameStyle = frameStyle;
+        this.textFrameStyle = textFrameStyle;
         this.color = color;
         this.textBackgroundColor = textBackgroundColor;
         this.textBorderColor = textBorderColor;
         this.frameColor = frameColor;
         this.brushSize = brushSize;
         this.shapeSize = shapeSize;
+        this.shapeRotationDegrees = shapeRotationDegrees;
+        this.shapeFlipHorizontal = shapeFlipHorizontal;
         this.textSize = textSize;
         this.pendingText = pendingText;
+        this.shapeFillEnabled = shapeFillEnabled;
         this.frameRainbowEnabled = frameRainbowEnabled;
         this.editingAvailable = editingAvailable;
         this.sceneInputAvailable = sceneInputAvailable;
@@ -219,9 +235,16 @@ enum PaintFrameStyle
     }
 }
 
+enum PaintTextFrameStyle
+{
+    RECTANGLE,
+    SPEECH_BUBBLE
+}
+
 enum PaintShapeType
 {
     RECTANGLE("Square"),
+    LINE("Line"),
     CIRCLE("Circle"),
     X("Cross"),
     TRIANGLE("Triangle"),
@@ -232,13 +255,78 @@ enum PaintShapeType
     PRAYER_STAR("Prayer Star"),
     TREASURE_CHEST("Treasure Chest"),
     SPIDER_WEB("Spider Web"),
-    TARGET("Target");
+    TARGET("Target"),
+    HEART("Heart"),
+    ARROW("Arrow"),
+    CHECK_MARK("Check Mark"),
+    LOBSTER("Lobster"),
+    SWORD("Sword"),
+    BATTLE_AXE("Battle Axe"),
+    SHIELD("Shield"),
+    DRAGON("Dragon Icon");
 
     private final String displayName;
 
     PaintShapeType(String displayName)
     {
         this.displayName = displayName;
+    }
+
+    @Override
+    public String toString()
+    {
+        return displayName;
+    }
+}
+
+enum PaintStampType
+{
+    /*FILENAME("DisplayedText")*/
+
+    /*NPCs*/
+    CHICKEN("Chicken"),
+    DELRITH("Delrith"),
+    ELVARG("Elvarg"),
+    JAD("Jad"),
+    MAGGOT_KING("Maggot King"),
+    OLM("Olm"),
+    VERZIK("Verzik"),
+    WARDEN("Warden"),
+
+    /*GEAR*/
+    RUNE_2H("Rune 2H"),
+    DRAGON_SWORD("Dragon sword"),
+    TBOW("Twisted bow"),
+    SCYTHE("Scythe"),
+    SHADOW("Tumeken's shadow"),
+
+    /*PROJECTILES*/
+    DRAGONFIRE("Dragon fire"),
+
+    /*PLAYERS*/
+    BOT_SKINNY("Bot (Thin)"),
+    BOT_FAT("Bot (Fat)"),
+
+    /*RESOURCES*/
+    LOBSTER("Lobster"),
+
+    /*MISC*/
+    ROCK("Rock"),
+    TREASURE("Treasure Chest"),
+    TREE("Tree"),
+    THOUGHT("Thought Bubble"),
+    OSRS_LOGO("OSRS Logo");
+
+    private final String displayName;
+
+    PaintStampType(String displayName)
+    {
+        this.displayName = displayName;
+    }
+
+    String getAssetName()
+    {
+        return name().toLowerCase();
     }
 
     @Override
@@ -361,6 +449,7 @@ final class PaintText
     int colorArgb;
     int fontSize;
     PaintFontStyle fontStyle;
+    PaintTextFrameStyle frameStyle;
     // Legacy fields kept for load compatibility with previously persisted notes.
     boolean backgroundEnabled;
     int backgroundColorArgb;
@@ -387,6 +476,7 @@ final class PaintText
         this.colorArgb = color.getRGB();
         this.fontSize = fontSize;
         this.fontStyle = fontStyle;
+        this.frameStyle = PaintTextFrameStyle.RECTANGLE;
         this.backgroundColorArgb = backgroundColor == null ? 0 : backgroundColor.getRGB();
         this.borderColorArgb = borderColor == null ? 0 : borderColor.getRGB();
         this.backgroundEnabled = new Color(this.backgroundColorArgb, true).getAlpha() > 0;
@@ -472,7 +562,11 @@ final class PaintShape
     int offsetY;
     int colorArgb;
     int size;
+    int rotationDegrees;
+    boolean flipHorizontal;
     PaintShapeType shapeType;
+    String unsupportedShapeType;
+    boolean filled;
     private transient Color cachedColor;
 
     PaintShape()
@@ -481,6 +575,21 @@ final class PaintShape
 
     PaintShape(PaintTarget target, Color color, int size, PaintShapeType shapeType)
     {
+        this(target, color, size, shapeType, false);
+    }
+
+    PaintShape(PaintTarget target, Color color, int size, PaintShapeType shapeType, boolean filled)
+    {
+        this(target, color, size, 0, false, shapeType, filled);
+    }
+
+    PaintShape(PaintTarget target, Color color, int size, int rotationDegrees, PaintShapeType shapeType, boolean filled)
+    {
+        this(target, color, size, rotationDegrees, false, shapeType, filled);
+    }
+
+    PaintShape(PaintTarget target, Color color, int size, int rotationDegrees, boolean flipHorizontal, PaintShapeType shapeType, boolean filled)
+    {
         this.plane = target.plane;
         this.worldX = target.worldX;
         this.worldY = target.worldY;
@@ -488,7 +597,10 @@ final class PaintShape
         this.offsetY = target.offsetY;
         this.colorArgb = color.getRGB();
         this.size = size;
+        this.rotationDegrees = rotationDegrees;
+        this.flipHorizontal = flipHorizontal;
         this.shapeType = shapeType;
+        this.filled = filled;
     }
 
     Color getColor()
@@ -501,10 +613,52 @@ final class PaintShape
     }
 }
 
+final class PaintStamp
+{
+    int plane;
+    int worldX;
+    int worldY;
+    int offsetX;
+    int offsetY;
+    int size;
+    int rotationDegrees;
+    boolean flipHorizontal;
+    PaintStampType stampType;
+    String unsupportedStampType;
+
+    PaintStamp()
+    {
+    }
+
+    PaintStamp(PaintTarget target, int size, PaintStampType stampType)
+    {
+        this(target, size, 0, stampType);
+    }
+
+    PaintStamp(PaintTarget target, int size, int rotationDegrees, PaintStampType stampType)
+    {
+        this(target, size, rotationDegrees, false, stampType);
+    }
+
+    PaintStamp(PaintTarget target, int size, int rotationDegrees, boolean flipHorizontal, PaintStampType stampType)
+    {
+        this.plane = target.plane;
+        this.worldX = target.worldX;
+        this.worldY = target.worldY;
+        this.offsetX = target.offsetX;
+        this.offsetY = target.offsetY;
+        this.size = size;
+        this.rotationDegrees = rotationDegrees;
+        this.flipHorizontal = flipHorizontal;
+        this.stampType = stampType;
+    }
+}
+
 final class PaintChunkData
 {
     List<PaintStroke> strokes = new ArrayList<>();
     List<PaintShape> shapes = new ArrayList<>();
+    List<PaintStamp> stamps = new ArrayList<>();
     List<PaintText> texts = new ArrayList<>();
 
     void normalizeLoadedState()
@@ -516,6 +670,10 @@ final class PaintChunkData
         if (shapes == null)
         {
             shapes = new ArrayList<>();
+        }
+        if (stamps == null)
+        {
+            stamps = new ArrayList<>();
         }
         if (texts == null)
         {
@@ -564,7 +722,7 @@ final class PaintChunkData
 
     boolean isEmpty()
     {
-        return strokes.isEmpty() && shapes.isEmpty() && texts.isEmpty();
+        return strokes.isEmpty() && shapes.isEmpty() && stamps.isEmpty() && texts.isEmpty();
     }
 }
 

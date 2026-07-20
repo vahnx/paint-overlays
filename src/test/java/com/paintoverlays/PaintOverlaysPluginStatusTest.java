@@ -29,6 +29,10 @@ public class PaintOverlaysPluginStatusTest
             new Color(0xFF0000),
             48,
             PaintShapeType.STAR));
+        chunk.stamps.add(new PaintStamp(
+            new PaintTarget(3201, 3202, 0, 64, 64),
+            48,
+            PaintStampType.CHICKEN));
         chunk.texts.add(new PaintText(
             new PaintTarget(3202, 3202, 0, 64, 64),
             new Color(0x26FF00),
@@ -39,7 +43,7 @@ public class PaintOverlaysPluginStatusTest
             "Hello"));
 
         assertEquals(
-            "Chunk scene.0.1234 | Brush 1/300 | Shapes 1/100 | Text 1/100",
+            "Chunk scene.0.1234 | Brush 1/300 | Shapes 1/100 | Stamps 1/100 | Text 1/100",
             PaintOverlaysPlugin.formatChunkUsageStatus("Chunk", "scene.0.1234", chunk, true));
     }
 

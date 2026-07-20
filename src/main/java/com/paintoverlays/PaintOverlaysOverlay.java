@@ -9,7 +9,9 @@ import java.awt.Polygon;
 import java.awt.RenderingHints;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.RoundRectangle2D;
 import java.awt.Shape;
+import java.awt.image.BufferedImage;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
@@ -85,6 +87,14 @@ class PaintOverlaysOverlay extends Overlay
 
         for (PaintChunkData chunk : chunks)
         {
+            for (PaintStamp stamp : chunk.stamps)
+            {
+                renderStamp(graphics, stamp, worldView);
+            }
+        }
+
+        for (PaintChunkData chunk : chunks)
+        {
             for (PaintText text : chunk.texts)
             {
                 renderText(graphics, text, worldView);
@@ -97,6 +107,7 @@ class PaintOverlaysOverlay extends Overlay
         {
             PaintTool tool = plugin.getTool();
             PaintTarget previewTarget = tool == PaintTool.SHAPE || tool == PaintTool.TEXT
+                || tool == PaintTool.STAMP
                 ? plugin.getScenePreviewTarget()
                 : null;
             renderPreview(graphics, previewTarget, plugin.getMouseCanvasPosition(), worldView);
@@ -187,7 +198,8 @@ class PaintOverlaysOverlay extends Overlay
         graphics.setFont(textFont);
         renderTextDecoration(graphics, point, textFont, text.text,
             text.getBackgroundColor(),
-            text.getBorderColor());
+            text.getBorderColor(),
+            text.frameStyle);
         graphics.setColor(text.getShadowColor());
         graphics.drawString(text.text, point.getX() + 1, point.getY() + 1);
         graphics.setColor(text.getColor());
@@ -324,7 +336,7 @@ class PaintOverlaysOverlay extends Overlay
             return;
         }
 
-        int size = Math.max(1, shape.size);
+        int size = scaledSceneObjectSize(shape.size, worldView);
         Shape outline = PaintMath.shapeOutline(center, size, shape.shapeType);
         if (outline == null)
         {
@@ -332,9 +344,11 @@ class PaintOverlaysOverlay extends Overlay
         }
 
         java.awt.Stroke previousStroke = graphics.getStroke();
+        java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
         graphics.setColor(shape.getColor());
         graphics.setStroke(SHAPE_STROKE);
-        if (PaintMath.shouldFillShape(shape.shapeType))
+        applyObjectTransform(graphics, center, shape.rotationDegrees, shape.flipHorizontal);
+        if (PaintMath.shouldFillShape(shape.shapeType, shape.filled))
         {
             graphics.fill(outline);
         }
@@ -342,7 +356,27 @@ class PaintOverlaysOverlay extends Overlay
         {
             graphics.draw(outline);
         }
+        graphics.setTransform(previousTransform);
         graphics.setStroke(previousStroke);
+    }
+
+    private void renderStamp(Graphics2D graphics, PaintStamp stamp, WorldView worldView)
+    {
+        Point center = toCanvasPoint(worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY);
+        BufferedImage image = PaintStamps.getImage(stamp);
+        if (center == null || image == null)
+        {
+            return;
+        }
+
+        int size = scaledSceneObjectSize(stamp.size, worldView);
+        Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+        java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        applyObjectTransform(graphics, center, stamp.rotationDegrees, stamp.flipHorizontal);
+        graphics.drawImage(image, center.getX() - size / 2, center.getY() - size / 2, size, size, null);
+        graphics.setTransform(previousTransform);
+        restoreInterpolationHint(graphics, previousInterpolation);
     }
 
     private void renderPreview(Graphics2D graphics, PaintTarget target, Point mouseCanvas, WorldView worldView)
@@ -360,7 +394,7 @@ class PaintOverlaysOverlay extends Overlay
                 return;
             }
 
-            int size = plugin.getShapeSize();
+            int size = scaledSceneObjectSize(plugin.getShapeSize(), worldView);
             Shape outline = PaintMath.shapeOutline(point, size, plugin.getShapeType());
             if (outline == null)
             {
@@ -368,9 +402,11 @@ class PaintOverlaysOverlay extends Overlay
             }
 
             java.awt.Stroke previousStroke = graphics.getStroke();
+            java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
             graphics.setColor(new Color(plugin.getColor().getRGB() & 0x00FFFFFF | 0xB4000000, true));
             graphics.setStroke(new BasicStroke(2f));
-            if (PaintMath.shouldFillShape(plugin.getShapeType()))
+            applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
+            if (PaintMath.shouldFillShape(plugin.getShapeType(), plugin.isShapeFillEnabled()))
             {
                 graphics.fill(outline);
             }
@@ -378,7 +414,33 @@ class PaintOverlaysOverlay extends Overlay
             {
                 graphics.draw(outline);
             }
+            graphics.setTransform(previousTransform);
             graphics.setStroke(previousStroke);
+            return;
+        }
+
+        if (plugin.getTool() == PaintTool.STAMP)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            Point point = toCanvasPoint(worldView, target.plane, target.worldX, target.worldY, target.offsetX, target.offsetY);
+            BufferedImage image = PaintStamps.getImage(plugin.getStampType());
+            if (point == null || image == null)
+            {
+                return;
+            }
+
+            int size = scaledSceneObjectSize(plugin.getShapeSize(), worldView);
+            Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
+            java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
+            graphics.drawImage(image, point.getX() - size / 2, point.getY() - size / 2, size, size, null);
+            graphics.setTransform(previousTransform);
+            restoreInterpolationHint(graphics, previousInterpolation);
             return;
         }
 
@@ -411,14 +473,15 @@ class PaintOverlaysOverlay extends Overlay
         graphics.setFont(textFont);
         renderTextDecoration(graphics, point, textFont, plugin.getPendingText().trim().isEmpty() ? "Text" : plugin.getPendingText().trim(),
             plugin.getTextBackgroundColor(),
-            plugin.getTextBorderColor());
+            plugin.getTextBorderColor(),
+            plugin.getTextFrameStyle());
         graphics.setColor(new Color(plugin.getColor().getRed(), plugin.getColor().getGreen(), plugin.getColor().getBlue(), 180));
         graphics.drawString(plugin.getPendingText().trim().isEmpty() ? "Text" : plugin.getPendingText().trim(), point.getX(), point.getY());
         graphics.setFont(previous);
     }
 
     private static void renderTextDecoration(Graphics2D graphics, Point point, Font font, String text,
-                                             Color backgroundColor, Color borderColor)
+                                             Color backgroundColor, Color borderColor, PaintTextFrameStyle frameStyle)
     {
         if ((backgroundColor == null || backgroundColor.getAlpha() <= 0)
             && (borderColor == null || borderColor.getAlpha() <= 0))
@@ -438,10 +501,11 @@ class PaintOverlaysOverlay extends Overlay
         int y = (int) Math.floor(bounds.getY()) - paddingY;
         int width = (int) Math.ceil(bounds.getWidth()) + paddingX * 2;
         int height = (int) Math.ceil(bounds.getHeight()) + paddingY * 2;
+        Shape frame = textFrameShape(x, y, width, height, 6, frameStyle);
         if (backgroundColor != null && backgroundColor.getAlpha() > 0)
         {
             graphics.setColor(backgroundColor);
-            graphics.fillRoundRect(x, y, width, height, 6, 6);
+            graphics.fill(frame);
         }
 
         if (borderColor != null && borderColor.getAlpha() > 0)
@@ -449,9 +513,65 @@ class PaintOverlaysOverlay extends Overlay
             java.awt.Stroke previousStroke = graphics.getStroke();
             graphics.setColor(borderColor);
             graphics.setStroke(TEXT_BORDER_STROKE);
-            graphics.drawRoundRect(x, y, width, height, 6, 6);
+            graphics.draw(frame);
             graphics.setStroke(previousStroke);
         }
+    }
+
+    private static Shape textFrameShape(int x, int y, int width, int height, int arc, PaintTextFrameStyle frameStyle)
+    {
+        if (frameStyle != PaintTextFrameStyle.SPEECH_BUBBLE)
+        {
+            return new RoundRectangle2D.Double(x, y, width, height, arc, arc);
+        }
+
+        int radius = Math.max(2, arc / 2);
+        int tailStartX = x + Math.min(width - radius - 12, Math.max(radius + 8, 12));
+        int tailTipX = tailStartX - 8;
+        int tailEndX = tailStartX + 16;
+        int bottom = y + height;
+        Path2D.Double path = new Path2D.Double();
+        path.moveTo(x + radius, y);
+        path.lineTo(x + width - radius, y);
+        path.quadTo(x + width, y, x + width, y + radius);
+        path.lineTo(x + width, bottom - radius);
+        path.quadTo(x + width, bottom, x + width - radius, bottom);
+        path.lineTo(tailEndX, bottom);
+        path.lineTo(tailTipX, bottom + 10);
+        path.lineTo(tailStartX, bottom);
+        path.lineTo(x + radius, bottom);
+        path.quadTo(x, bottom, x, bottom - radius);
+        path.lineTo(x, y + radius);
+        path.quadTo(x, y, x + radius, y);
+        path.closePath();
+        return path;
+    }
+
+    private static void restoreInterpolationHint(Graphics2D graphics, Object previousInterpolation)
+    {
+        if (previousInterpolation == null)
+        {
+            graphics.getRenderingHints().remove(RenderingHints.KEY_INTERPOLATION);
+            return;
+        }
+
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation);
+    }
+
+    private static void applyObjectTransform(Graphics2D graphics, Point center, int rotationDegrees, boolean flipHorizontal)
+    {
+        graphics.translate(center.getX(), center.getY());
+        graphics.rotate(Math.toRadians(rotationDegrees));
+        if (flipHorizontal)
+        {
+            graphics.scale(-1.0, 1.0);
+        }
+        graphics.translate(-center.getX(), -center.getY());
+    }
+
+    private int scaledSceneObjectSize(int baseSize, WorldView worldView)
+    {
+        return Math.max(1, baseSize);
     }
 
     private Point toCanvasPoint(WorldView worldView, int plane, PaintPoint point)
@@ -498,3 +618,5 @@ class PaintOverlaysOverlay extends Overlay
         return new Color(color.getRed(), color.getGreen(), color.getBlue(), clampedAlpha);
     }
 }
+
+
