@@ -947,7 +947,7 @@ public class PaintOverlaysPlugin extends Plugin
             return null;
         }
 
-        WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
+        WorldPoint playerLocation = getCurrentScenePlayerLocation();
         if (playerLocation == null)
         {
             return null;
@@ -1120,7 +1120,7 @@ public class PaintOverlaysPlugin extends Plugin
         finalizePendingPaintAction();
         clearNearbySceneChunks();
 
-        WorldPoint location = client.getLocalPlayer().getWorldLocation();
+        WorldPoint location = getCurrentScenePlayerLocation();
         if (location == null)
         {
             refreshPanel();
@@ -4891,7 +4891,7 @@ public class PaintOverlaysPlugin extends Plugin
         String sceneChunkKey = null;
         if (client.getLocalPlayer() != null)
         {
-            WorldPoint location = client.getLocalPlayer().getWorldLocation();
+            WorldPoint location = getCurrentScenePlayerLocation();
             if (location != null)
             {
                 sceneChunkKey = getSceneChunkKey(location.getPlane(), location.getRegionID());
@@ -5250,7 +5250,7 @@ public class PaintOverlaysPlugin extends Plugin
             return null;
         }
 
-        WorldPoint location = client.getLocalPlayer().getWorldLocation();
+        WorldPoint location = getCurrentScenePlayerLocation();
         if (location == null)
         {
             return null;
@@ -5485,7 +5485,7 @@ public class PaintOverlaysPlugin extends Plugin
 
     private void addPlayerNearbySceneChunkKeys(Set<String> visibleKeys)
     {
-        WorldPoint location = client.getLocalPlayer().getWorldLocation();
+        WorldPoint location = getCurrentScenePlayerLocation();
         if (location == null)
         {
             return;
@@ -5569,6 +5569,60 @@ public class PaintOverlaysPlugin extends Plugin
         {
             visibleKeys.add(getSceneChunkKey(instanceLocation.getPlane(), instanceLocation.getRegionID()));
         }
+    }
+
+    private WorldPoint getCurrentScenePlayerLocation()
+    {
+        if (client.getLocalPlayer() == null)
+        {
+            return null;
+        }
+
+        WorldView worldView = client.getTopLevelWorldView();
+        LocalPoint localLocation = client.getLocalPlayer().getLocalLocation();
+        if (worldView != null && localLocation != null)
+        {
+            WorldPoint sceneLocation = resolveSceneWorldLocation(worldView, localLocation, worldView.getPlane());
+            if (sceneLocation != null)
+            {
+                return sceneLocation;
+            }
+        }
+
+        return client.getLocalPlayer().getWorldLocation();
+    }
+
+    private WorldPoint resolveSceneWorldLocation(WorldView worldView, LocalPoint localLocation, int plane)
+    {
+        Scene scene = worldView.getScene();
+        if (scene != null)
+        {
+            Tile[][][] tiles = scene.getTiles();
+            int sceneX = localLocation.getSceneX();
+            int sceneY = localLocation.getSceneY();
+            if (tiles != null
+                && plane >= 0
+                && plane < tiles.length
+                && tiles[plane] != null
+                && sceneX >= 0
+                && sceneX < tiles[plane].length
+                && tiles[plane][sceneX] != null
+                && sceneY >= 0
+                && sceneY < tiles[plane][sceneX].length)
+            {
+                Tile tile = tiles[plane][sceneX][sceneY];
+                if (tile != null)
+                {
+                    WorldPoint worldLocation = tile.getWorldLocation();
+                    if (worldLocation != null)
+                    {
+                        return worldLocation;
+                    }
+                }
+            }
+        }
+
+        return WorldPoint.fromLocalInstance(client, localLocation, plane);
     }
 
     private int extractSceneChunkPlane(String key)
