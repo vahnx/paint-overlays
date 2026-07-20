@@ -847,8 +847,9 @@ class PaintOverlaysPanel extends PluginPanel
             int selectedScrollY = selectedAssetIsShape ? savedShapeScrollY : savedStampScrollY;
             if (selectedScrollY <= 0)
             {
-                focusSelectedAssetButton(selectedAssetButton);
+                scrollSelectedAssetButtonIntoView(selectedAssetButton);
             }
+            focusSelectedAssetButton(selectedAssetButton);
 
             shapePickerScrollY = shapeScrollPane.getVerticalScrollBar().getValue();
             stampPickerScrollY = stampScrollPane.getVerticalScrollBar().getValue();
@@ -857,7 +858,7 @@ class PaintOverlaysPanel extends PluginPanel
         });
     }
 
-    private static void focusSelectedAssetButton(JButton selectedButton)
+    private static void scrollSelectedAssetButtonIntoView(JButton selectedButton)
     {
         if (selectedButton != null)
         {
@@ -866,6 +867,13 @@ class PaintOverlaysPanel extends PluginPanel
                 0,
                 selectedButton.getWidth(),
                 selectedButton.getHeight()));
+        }
+    }
+
+    private static void focusSelectedAssetButton(JButton selectedButton)
+    {
+        if (selectedButton != null)
+        {
             selectedButton.requestFocusInWindow();
         }
     }
