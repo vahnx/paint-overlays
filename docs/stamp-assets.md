@@ -77,3 +77,5 @@ Dynamic loading from inside `.runelite/paint-overlays/` may be technically possi
 Stamp enum names are persisted in saved paint data. Do not rename or remove old `PaintStampType` constants after release unless a migration is added.
 
 See `docs/data-compatibility.md` for the shared shape and stamp compatibility rules.
+
+See `docs/stamp-rendering.md` for the current in-game stamp rendering method and the previous billboard method.

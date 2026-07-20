@@ -8,6 +8,10 @@ Do not rename or remove persisted enum constants after release.
 
 If an enum has ever been used by saved paint data, treat its constant name as a stable data ID. This applies even if the picker label, PNG, or shape definition changes later.
 
+Backwards compatibility is a release requirement, not a nice-to-have. Any change to persisted paint JSON, enum-backed assets, shape/stamp rendering, or chunk loading must preserve drawings created by older released versions unless there is an explicit migration and test coverage for the old data.
+
+When adding a new storage or rendering strategy, keep the old data path readable. For example, if new in-game shapes are stored as baked stroke points, existing saved `PaintShape` entries must still load and render unless a migration deliberately converts them.
+
 ## Shape Rules
 
 - Keep existing `PaintShapeType` constants in `PaintModels.java`.
@@ -63,6 +67,7 @@ A safe migration must:
 - Preserve unknown or unsupported names where possible.
 - Log or show a clear missing asset/status message for data that cannot be migrated.
 - Include tests for old saved JSON.
+- Avoid deleting or rewriting user data unless the replacement format has been validated.
 
 The current safer default is to avoid renames entirely.
 

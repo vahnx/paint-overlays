@@ -94,6 +94,12 @@ After completing a task, do not declare it done. Instead:
 
 These rules are specific to this repository and should be kept separate from the shared RuneLite guidance above.
 
+## Data Compatibility
+
+- Treat backwards compatibility for saved paint data as a release requirement.
+- Before changing persisted JSON, enum-backed shapes/stamps, chunk loading, or shape/stamp rendering behavior, read and follow `docs/data-compatibility.md`.
+- Keep old saved data readable when adding new storage/rendering strategies. Add an explicit migration and tests before removing old data paths.
+
 ## Release Safety
 
 - Debug-only JVM flags or system properties are for local development and testing only.

@@ -13,8 +13,11 @@ import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Shape;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.PathIterator;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -103,6 +106,10 @@ public class PaintOverlaysPlugin extends Plugin
     private static final int MIN_TEXT_SIZE = 1;
     private static final int MAX_TEXT_SIZE = 5000;
     private static final int DEFAULT_SHAPE_SIZE = 48;
+    private static final int BAKED_SCENE_SHAPE_STROKE_WIDTH = 2;
+    private static final double BAKED_SCENE_SHAPE_FLATNESS = 2.0;
+    private static final double BAKED_SCENE_SHAPE_SAMPLE_STEP = 3.0;
+    private static final double GROUND_PROJECTED_STAMP_SCALE = 3.0;
     private static final int MIN_SHAPE_SIZE = 4;
     private static final int MAX_SHAPE_SIZE = 1000;
     private static final int MAX_DECODED_CHUNK_BYTES = 32 * 1024 * 1024;
@@ -2234,6 +2241,18 @@ public class PaintOverlaysPlugin extends Plugin
 
     private void placeSceneShape(PaintTarget target)
     {
+        PaintStroke bakedStroke = bakeSceneShapeStroke(target);
+        if (bakedStroke != null && persistStrokeSegment(
+            sceneChunks,
+            sceneChunkKeys,
+            getSceneChunkKey(target.plane, target.getRegionId()),
+            bakedStroke))
+        {
+            commitUndoAction(pendingUndoAction);
+            refreshPanel();
+            return;
+        }
+
         String key = getSceneChunkKey(target.plane, target.getRegionId());
         if (!hasShapeCapacity(sceneChunks, sceneChunkKeys, key))
         {
@@ -2272,6 +2291,132 @@ public class PaintOverlaysPlugin extends Plugin
         }
         commitUndoAction(undoAction);
         refreshPanel();
+    }
+
+    private PaintStroke bakeSceneShapeStroke(PaintTarget target)
+    {
+        WorldView worldView = client.getTopLevelWorldView();
+        if (worldView == null || shapeType == null)
+        {
+            return null;
+        }
+        if (PaintMath.shouldFillShape(shapeType, shapeFillEnabled))
+        {
+            return null;
+        }
+
+        Point center = toSceneCanvasPoint(worldView, target.plane, target.worldX, target.worldY, target.offsetX, target.offsetY);
+        if (center == null)
+        {
+            return null;
+        }
+
+        Shape outline = PaintMath.shapeOutline(center, shapeSize, shapeType);
+        if (outline == null)
+        {
+            return null;
+        }
+
+        AffineTransform transform = new AffineTransform();
+        transform.translate(center.getX(), center.getY());
+        transform.rotate(Math.toRadians(shapeRotationDegrees));
+        if (shapeFlipHorizontal)
+        {
+            transform.scale(-1.0, 1.0);
+        }
+        transform.translate(-center.getX(), -center.getY());
+
+        PaintStroke stroke = new PaintStroke(target.plane, color, BAKED_SCENE_SHAPE_STROKE_WIDTH);
+        appendShapePathToStroke(stroke, outline.getPathIterator(transform, BAKED_SCENE_SHAPE_FLATNESS));
+        return stroke.points.size() < 2 ? null : stroke;
+    }
+
+    private void appendShapePathToStroke(PaintStroke stroke, PathIterator iterator)
+    {
+        double[] coordinates = new double[6];
+        double startX = 0.0;
+        double startY = 0.0;
+        double previousX = 0.0;
+        double previousY = 0.0;
+        boolean hasPrevious = false;
+        while (!iterator.isDone())
+        {
+            int segmentType = iterator.currentSegment(coordinates);
+            switch (segmentType)
+            {
+                case PathIterator.SEG_MOVETO:
+                    startX = coordinates[0];
+                    startY = coordinates[1];
+                    previousX = startX;
+                    previousY = startY;
+                    appendSceneShapeSample(stroke, previousX, previousY, true);
+                    hasPrevious = true;
+                    break;
+                case PathIterator.SEG_LINETO:
+                    if (hasPrevious)
+                    {
+                        appendSceneShapeLine(stroke, previousX, previousY, coordinates[0], coordinates[1], false);
+                    }
+                    previousX = coordinates[0];
+                    previousY = coordinates[1];
+                    hasPrevious = true;
+                    break;
+                case PathIterator.SEG_CLOSE:
+                    if (hasPrevious)
+                    {
+                        appendSceneShapeLine(stroke, previousX, previousY, startX, startY, false);
+                        previousX = startX;
+                        previousY = startY;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            iterator.next();
+        }
+    }
+
+    private void appendSceneShapeLine(PaintStroke stroke, double startX, double startY, double endX, double endY, boolean startsNewSegment)
+    {
+        double distance = Math.hypot(endX - startX, endY - startY);
+        int steps = Math.max(1, (int) Math.ceil(distance / BAKED_SCENE_SHAPE_SAMPLE_STEP));
+        boolean nextPointStartsSegment = startsNewSegment;
+        for (int i = 1; i <= steps; i++)
+        {
+            double t = i / (double) steps;
+            boolean appended = appendSceneShapeSample(
+                stroke,
+                startX + (endX - startX) * t,
+                startY + (endY - startY) * t,
+                nextPointStartsSegment);
+            nextPointStartsSegment = !appended;
+        }
+    }
+
+    private boolean appendSceneShapeSample(PaintStroke stroke, double canvasX, double canvasY, boolean startsNewSegment)
+    {
+        PaintTarget sampleTarget = findSceneTarget((int) Math.round(canvasX), (int) Math.round(canvasY));
+        if (sampleTarget == null)
+        {
+            return false;
+        }
+
+        PaintPoint point = new PaintPoint(sampleTarget);
+        point.startsNewSegment = startsNewSegment || stroke.points.isEmpty() ? Boolean.TRUE : null;
+        if (!stroke.points.isEmpty())
+        {
+            PaintPoint previous = stroke.points.get(stroke.points.size() - 1);
+            if (previous.worldX == point.worldX
+                && previous.worldY == point.worldY
+                && Math.abs(previous.offsetX - point.offsetX) <= 1
+                && Math.abs(previous.offsetY - point.offsetY) <= 1
+                && !startsNewSegment)
+            {
+                return true;
+            }
+        }
+        stroke.points.add(point);
+        return true;
     }
 
     private void placeSceneStamp(PaintTarget target)
@@ -4621,7 +4766,10 @@ public class PaintOverlaysPlugin extends Plugin
 
     private Rectangle2D sceneStampBounds(PaintStamp stamp, WorldView worldView)
     {
-        return shapeBounds(toSceneCanvasPoint(worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY), stamp.size);
+        Rectangle2D projectedBounds = projectedSceneStampBounds(stamp, worldView);
+        return projectedBounds != null
+            ? projectedBounds
+            : shapeBounds(toSceneCanvasPoint(worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY), stamp.size);
     }
 
     private Rectangle2D mapShapeBounds(PaintShape shape)
@@ -4643,6 +4791,55 @@ public class PaintOverlaysPlugin extends Plugin
 
         double half = size / 2.0;
         return new Rectangle2D.Double(center.getX() - half, center.getY() - half, size, size);
+    }
+
+    private Rectangle2D projectedSceneStampBounds(PaintStamp stamp, WorldView worldView)
+    {
+        Point center = toSceneCanvasPoint(worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY);
+        if (center == null || stamp.size <= 0)
+        {
+            return null;
+        }
+
+        double centerX = PaintMath.continuousCoordinate(stamp.worldX, stamp.offsetX);
+        double centerY = PaintMath.continuousCoordinate(stamp.worldY, stamp.offsetY);
+        double halfTiles = stamp.size * GROUND_PROJECTED_STAMP_SCALE / 256.0;
+        double radians = Math.toRadians(stamp.rotationDegrees);
+        double cos = Math.cos(radians);
+        double sin = Math.sin(radians);
+        double flip = stamp.flipHorizontal ? -1.0 : 1.0;
+
+        Point xAxis = toSceneCanvasPoint(worldView, stamp.plane, centerX + cos * halfTiles * flip, centerY - sin * halfTiles * flip);
+        Point yAxis = toSceneCanvasPoint(worldView, stamp.plane, centerX - sin * halfTiles, centerY - cos * halfTiles);
+        if (xAxis == null || yAxis == null)
+        {
+            return null;
+        }
+
+        double xVectorX = xAxis.getX() - center.getX();
+        double xVectorY = xAxis.getY() - center.getY();
+        double yVectorX = yAxis.getX() - center.getX();
+        double yVectorY = yAxis.getY() - center.getY();
+        if ((Math.abs(xVectorX) + Math.abs(xVectorY) < 0.5)
+            || (Math.abs(yVectorX) + Math.abs(yVectorY) < 0.5))
+        {
+            return null;
+        }
+
+        double x1 = center.getX() - xVectorX - yVectorX;
+        double y1 = center.getY() - xVectorY - yVectorY;
+        double x2 = center.getX() + xVectorX - yVectorX;
+        double y2 = center.getY() + xVectorY - yVectorY;
+        double x3 = center.getX() + xVectorX + yVectorX;
+        double y3 = center.getY() + xVectorY + yVectorY;
+        double x4 = center.getX() - xVectorX + yVectorX;
+        double y4 = center.getY() - xVectorY + yVectorY;
+
+        double minX = Math.min(Math.min(x1, x2), Math.min(x3, x4));
+        double minY = Math.min(Math.min(y1, y2), Math.min(y3, y4));
+        double maxX = Math.max(Math.max(x1, x2), Math.max(x3, x4));
+        double maxY = Math.max(Math.max(y1, y2), Math.max(y3, y4));
+        return new Rectangle2D.Double(minX, minY, maxX - minX, maxY - minY);
     }
 
     private void updateContextState()
@@ -5425,8 +5622,46 @@ public class PaintOverlaysPlugin extends Plugin
             return null;
         }
 
+        Polygon tilePoly = Perspective.getCanvasTilePoly(client, tileCenter);
+        if (tilePoly != null && tilePoly.npoints == 4)
+        {
+            return interpolateTileCanvasPoint(tilePoly, offsetX, offsetY);
+        }
+
         LocalPoint localPoint = tileCenter.plus(offsetX - 64, offsetY - 64);
         return Perspective.localToCanvas(client, localPoint, plane);
+    }
+
+    private Point toSceneCanvasPoint(WorldView worldView, int plane, double continuousX, double continuousY)
+    {
+        int worldX = (int) Math.floor(continuousX + 0.5);
+        int worldY = (int) Math.floor(continuousY + 0.5);
+        int offsetX = clampOffset((int) Math.round((continuousX - worldX) * 128.0 + 64.0));
+        int offsetY = clampOffset((int) Math.round((continuousY - worldY) * 128.0 + 64.0));
+        return toSceneCanvasPoint(worldView, plane, worldX, worldY, offsetX, offsetY);
+    }
+
+    private static Point interpolateTileCanvasPoint(Polygon polygon, int offsetX, int offsetY)
+    {
+        double u = offsetY / 128.0;
+        double v = offsetX / 128.0;
+        int x = (int) Math.round(bilerp(
+            polygon.xpoints[0],
+            polygon.xpoints[1],
+            polygon.xpoints[2],
+            polygon.xpoints[3],
+            u,
+            v,
+            true));
+        int y = (int) Math.round(bilerp(
+            polygon.ypoints[0],
+            polygon.ypoints[1],
+            polygon.ypoints[2],
+            polygon.ypoints[3],
+            u,
+            v,
+            false));
+        return new Point(x, y);
     }
 
     private Tile findSceneTileAtMouse(WorldView worldView, int mouseX, int mouseY)

@@ -7,6 +7,7 @@ import java.awt.Font;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.RenderingHints;
+import java.awt.geom.AffineTransform;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
@@ -38,6 +39,7 @@ class PaintOverlaysOverlay extends Overlay
     private static final Color CLEAR_PREVIEW_CHUNK_BASE = new Color(248, 96, 96);
     private static final BasicStroke SHAPE_STROKE = new BasicStroke(2f);
     private static final BasicStroke TEXT_BORDER_STROKE = new BasicStroke(1.5f);
+    private static final double GROUND_PROJECTED_STAMP_SCALE = 3.0;
     private final Client client;
     private final PaintOverlaysPlugin plugin;
 
@@ -371,10 +373,14 @@ class PaintOverlaysOverlay extends Overlay
 
         int size = scaledSceneObjectSize(stamp.size, worldView);
         Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-        java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+        AffineTransform previousTransform = graphics.getTransform();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        applyObjectTransform(graphics, center, stamp.rotationDegrees, stamp.flipHorizontal);
-        graphics.drawImage(image, center.getX() - size / 2, center.getY() - size / 2, size, size, null);
+        if (!drawGroundProjectedImage(graphics, image, worldView, stamp.plane, stamp.worldX, stamp.worldY, stamp.offsetX, stamp.offsetY,
+            size, stamp.rotationDegrees, stamp.flipHorizontal))
+        {
+            applyObjectTransform(graphics, center, stamp.rotationDegrees, stamp.flipHorizontal);
+            graphics.drawImage(image, center.getX() - size / 2, center.getY() - size / 2, size, size, null);
+        }
         graphics.setTransform(previousTransform);
         restoreInterpolationHint(graphics, previousInterpolation);
     }
@@ -435,10 +441,14 @@ class PaintOverlaysOverlay extends Overlay
 
             int size = scaledSceneObjectSize(plugin.getShapeSize(), worldView);
             Object previousInterpolation = graphics.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-            java.awt.geom.AffineTransform previousTransform = graphics.getTransform();
+            AffineTransform previousTransform = graphics.getTransform();
             graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
-            graphics.drawImage(image, point.getX() - size / 2, point.getY() - size / 2, size, size, null);
+            if (!drawGroundProjectedImage(graphics, image, worldView, target.plane, target.worldX, target.worldY, target.offsetX, target.offsetY,
+                size, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal()))
+            {
+                applyObjectTransform(graphics, point, plugin.getShapeRotationDegrees(), plugin.isShapeFlipHorizontal());
+                graphics.drawImage(image, point.getX() - size / 2, point.getY() - size / 2, size, size, null);
+            }
             graphics.setTransform(previousTransform);
             restoreInterpolationHint(graphics, previousInterpolation);
             return;
@@ -569,6 +579,61 @@ class PaintOverlaysOverlay extends Overlay
         graphics.translate(-center.getX(), -center.getY());
     }
 
+    private boolean drawGroundProjectedImage(
+        Graphics2D graphics,
+        BufferedImage image,
+        WorldView worldView,
+        int plane,
+        int worldX,
+        int worldY,
+        int offsetX,
+        int offsetY,
+        int size,
+        int rotationDegrees,
+        boolean flipHorizontal)
+    {
+        Point center = toCanvasPoint(worldView, plane, worldX, worldY, offsetX, offsetY);
+        if (center == null || image == null || image.getWidth() <= 0 || image.getHeight() <= 0 || size <= 0)
+        {
+            return false;
+        }
+
+        double centerX = PaintMath.continuousCoordinate(worldX, offsetX);
+        double centerY = PaintMath.continuousCoordinate(worldY, offsetY);
+        double halfTiles = size * GROUND_PROJECTED_STAMP_SCALE / (double) (LOCAL_TILE_SIZE * 2);
+        double radians = Math.toRadians(rotationDegrees);
+        double cos = Math.cos(radians);
+        double sin = Math.sin(radians);
+        double flip = flipHorizontal ? -1.0 : 1.0;
+
+        Point xAxis = toCanvasPoint(worldView, plane, centerX + cos * halfTiles * flip, centerY - sin * halfTiles * flip);
+        Point yAxis = toCanvasPoint(worldView, plane, centerX - sin * halfTiles, centerY - cos * halfTiles);
+        if (xAxis == null || yAxis == null)
+        {
+            return false;
+        }
+
+        double xVectorX = xAxis.getX() - center.getX();
+        double xVectorY = xAxis.getY() - center.getY();
+        double yVectorX = yAxis.getX() - center.getX();
+        double yVectorY = yAxis.getY() - center.getY();
+        if ((Math.abs(xVectorX) + Math.abs(xVectorY) < 0.5)
+            || (Math.abs(yVectorX) + Math.abs(yVectorY) < 0.5))
+        {
+            return false;
+        }
+
+        AffineTransform transform = new AffineTransform(
+            (xVectorX * 2.0) / image.getWidth(),
+            (xVectorY * 2.0) / image.getWidth(),
+            (yVectorX * 2.0) / image.getHeight(),
+            (yVectorY * 2.0) / image.getHeight(),
+            center.getX() - xVectorX - yVectorX,
+            center.getY() - xVectorY - yVectorY);
+        graphics.drawImage(image, transform, null);
+        return true;
+    }
+
     private int scaledSceneObjectSize(int baseSize, WorldView worldView)
     {
         return Math.max(1, baseSize);
@@ -608,8 +673,51 @@ class PaintOverlaysOverlay extends Overlay
             return null;
         }
 
+        Polygon tilePoly = Perspective.getCanvasTilePoly(client, tileCenter);
+        if (tilePoly != null && tilePoly.npoints == 4)
+        {
+            return interpolateTileCanvasPoint(tilePoly, offsetX, offsetY);
+        }
+
         LocalPoint localPoint = tileCenter.plus(offsetX - 64, offsetY - 64);
         return Perspective.localToCanvas(client, localPoint, plane);
+    }
+
+    private Point toCanvasPoint(WorldView worldView, int plane, double continuousX, double continuousY)
+    {
+        int worldX = (int) Math.floor(continuousX + 0.5);
+        int worldY = (int) Math.floor(continuousY + 0.5);
+        int offsetX = PaintOverlaysPlugin.clampOffset((int) Math.round((continuousX - worldX) * LOCAL_TILE_SIZE + HALF_TILE));
+        int offsetY = PaintOverlaysPlugin.clampOffset((int) Math.round((continuousY - worldY) * LOCAL_TILE_SIZE + HALF_TILE));
+        return toCanvasPoint(worldView, plane, worldX, worldY, offsetX, offsetY);
+    }
+
+    private static Point interpolateTileCanvasPoint(Polygon polygon, int offsetX, int offsetY)
+    {
+        double u = offsetY / (double) LOCAL_TILE_SIZE;
+        double v = offsetX / (double) LOCAL_TILE_SIZE;
+        int x = (int) Math.round(bilerp(
+            polygon.xpoints[0],
+            polygon.xpoints[1],
+            polygon.xpoints[2],
+            polygon.xpoints[3],
+            u,
+            v));
+        int y = (int) Math.round(bilerp(
+            polygon.ypoints[0],
+            polygon.ypoints[1],
+            polygon.ypoints[2],
+            polygon.ypoints[3],
+            u,
+            v));
+        return new Point(x, y);
+    }
+
+    private static double bilerp(double a, double b, double c, double d, double u, double v)
+    {
+        double west = a * (1.0 - v) + b * v;
+        double east = d * (1.0 - v) + c * v;
+        return west * (1.0 - u) + east * u;
     }
 
     private static Color withAlpha(Color color, int alpha)

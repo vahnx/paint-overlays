@@ -432,11 +432,14 @@ class PaintOverlaysPanel extends PluginPanel
                 return;
             }
 
-            displayedTool = PaintTool.SHAPE;
-            selectedAssetTool = PaintTool.SHAPE;
+            if (selectedAssetTool == null)
+            {
+                selectedAssetTool = PaintTool.SHAPE;
+            }
+            displayedTool = selectedAssetTool == PaintTool.STAMP ? PaintTool.STAMP : PaintTool.SHAPE;
             toolRequestPending = true;
             setSelectedToolButton(displayedTool);
-            pendingToolRequestId = plugin.requestPanelToolChange(PaintTool.SHAPE);
+            pendingToolRequestId = plugin.requestPanelToolChange(displayedTool);
             SwingUtilities.invokeLater(this::openAssetPicker);
         });
     }
@@ -699,7 +702,7 @@ class PaintOverlaysPanel extends PluginPanel
         PaintTool assetTool = selectedAssetTool != null ? selectedAssetTool : plugin.getTool();
         PaintShapeType selectedShapeType = plugin.getShapeType();
         PaintStampType selectedStampType = plugin.getStampType();
-        JButton selectedAssetButton = null;
+        JToggleButton selectedAssetButton = null;
 
         JPanel shapeGrid = assetGrid("Shapes");
         for (PaintShapeType type : PaintShapeType.values())
@@ -709,9 +712,10 @@ class PaintOverlaysPanel extends PluginPanel
                 continue;
             }
 
-            JButton button = assetButton(type.toString(), createShapePreview(type, 40));
+            JToggleButton button = assetButton(type.toString(), createShapePreview(type, 40));
             if (assetTool == PaintTool.SHAPE && type == selectedShapeType)
             {
+                button.setSelected(true);
                 selectedAssetButton = button;
             }
             button.addActionListener(e ->
@@ -732,9 +736,10 @@ class PaintOverlaysPanel extends PluginPanel
         for (PaintStampType type : PaintStampType.values())
         {
             boolean locked = isStampLocked(type);
-            JButton button = assetButton(type.toString(), stampButtonPreview(type, locked));
+            JToggleButton button = assetButton(type.toString(), stampButtonPreview(type, locked));
             if (assetTool == PaintTool.STAMP && type == selectedStampType)
             {
+                button.setSelected(true);
                 selectedAssetButton = button;
             }
             button.setEnabled(!locked);
@@ -821,9 +826,9 @@ class PaintOverlaysPanel extends PluginPanel
         return scrollPane;
     }
 
-    private static JButton assetButton(String text, BufferedImage image)
+    private static JToggleButton assetButton(String text, BufferedImage image)
     {
-        JButton button = new JButton(assetButtonText(text), new ImageIcon(image));
+        JToggleButton button = new JToggleButton(assetButtonText(text), new ImageIcon(image));
         button.setToolTipText(text);
         button.setHorizontalTextPosition(SwingConstants.CENTER);
         button.setVerticalTextPosition(SwingConstants.BOTTOM);
@@ -836,7 +841,7 @@ class PaintOverlaysPanel extends PluginPanel
         JScrollPane stampScrollPane,
         int savedShapeScrollY,
         int savedStampScrollY,
-        JButton selectedAssetButton,
+        JToggleButton selectedAssetButton,
         boolean selectedAssetIsShape)
     {
         SwingUtilities.invokeLater(() ->
@@ -858,7 +863,7 @@ class PaintOverlaysPanel extends PluginPanel
         });
     }
 
-    private static void scrollSelectedAssetButtonIntoView(JButton selectedButton)
+    private static void scrollSelectedAssetButtonIntoView(JToggleButton selectedButton)
     {
         if (selectedButton != null)
         {
@@ -870,7 +875,7 @@ class PaintOverlaysPanel extends PluginPanel
         }
     }
 
-    private static void focusSelectedAssetButton(JButton selectedButton)
+    private static void focusSelectedAssetButton(JToggleButton selectedButton)
     {
         if (selectedButton != null)
         {
