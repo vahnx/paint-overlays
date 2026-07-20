@@ -287,6 +287,8 @@ enum PaintStampType
     CHICKEN("Chicken"),
     DELRITH("Delrith"),
     ELVARG("Elvarg"),
+    KBD("King Black Dragon"),
+    VORKATH("Vorkath"),
     JAD("Jad"),
     MAGGOT_KING("Maggot King"),
     OLM("Olm"),

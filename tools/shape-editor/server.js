@@ -1,7 +1,6 @@
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
-const url = require("url");
 
 const PORT = Number(process.env.PAINT_SHAPE_EDITOR_PORT || 45731);
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -116,7 +115,7 @@ function serveStatic(req, res, pathname) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const pathname = url.parse(req.url).pathname;
+  const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
 
   try {
     if (req.method === "GET" && pathname === "/api/catalog") {

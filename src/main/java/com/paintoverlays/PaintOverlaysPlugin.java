@@ -5555,7 +5555,6 @@ public class PaintOverlaysPlugin extends Plugin
         if (worldLocation != null)
         {
             visibleKeys.add(getSceneChunkKey(worldLocation.getPlane(), worldLocation.getRegionID()));
-            return;
         }
 
         LocalPoint localLocation = tile.getLocalLocation();
@@ -5670,7 +5669,7 @@ public class PaintOverlaysPlugin extends Plugin
             return null;
         }
 
-        LocalPoint tileCenter = LocalPoint.fromWorld(worldView, worldX, worldY);
+        LocalPoint tileCenter = sceneLocalPoint(worldView, plane, worldX, worldY);
         if (tileCenter == null)
         {
             return null;
@@ -5684,6 +5683,32 @@ public class PaintOverlaysPlugin extends Plugin
 
         LocalPoint localPoint = tileCenter.plus(offsetX - 64, offsetY - 64);
         return Perspective.localToCanvas(client, localPoint, plane);
+    }
+
+    private LocalPoint sceneLocalPoint(WorldView worldView, int plane, int worldX, int worldY)
+    {
+        LocalPoint localPoint = LocalPoint.fromWorld(worldView, worldX, worldY);
+        if (localPoint != null)
+        {
+            return localPoint;
+        }
+
+        WorldPoint worldPoint = new WorldPoint(worldX, worldY, plane);
+        for (WorldPoint instancePoint : WorldPoint.toLocalInstance(worldView, worldPoint))
+        {
+            if (instancePoint.getPlane() != plane)
+            {
+                continue;
+            }
+
+            localPoint = LocalPoint.fromWorld(worldView, instancePoint);
+            if (localPoint != null)
+            {
+                return localPoint;
+            }
+        }
+
+        return null;
     }
 
     private Point toSceneCanvasPoint(WorldView worldView, int plane, double continuousX, double continuousY)

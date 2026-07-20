@@ -653,7 +653,7 @@ class PaintOverlaysOverlay extends Overlay
 
         int regionX = regionId >>> 8;
         int regionY = regionId & 0xFF;
-        LocalPoint origin = LocalPoint.fromWorld(worldView, regionX << 6, regionY << 6);
+        LocalPoint origin = sceneLocalPoint(worldView, plane, regionX << 6, regionY << 6);
         if (origin == null)
         {
             return null;
@@ -667,7 +667,7 @@ class PaintOverlaysOverlay extends Overlay
 
     private Point toCanvasPoint(WorldView worldView, int plane, int worldX, int worldY, int offsetX, int offsetY)
     {
-        LocalPoint tileCenter = LocalPoint.fromWorld(worldView, worldX, worldY);
+        LocalPoint tileCenter = sceneLocalPoint(worldView, plane, worldX, worldY);
         if (tileCenter == null)
         {
             return null;
@@ -681,6 +681,32 @@ class PaintOverlaysOverlay extends Overlay
 
         LocalPoint localPoint = tileCenter.plus(offsetX - 64, offsetY - 64);
         return Perspective.localToCanvas(client, localPoint, plane);
+    }
+
+    private LocalPoint sceneLocalPoint(WorldView worldView, int plane, int worldX, int worldY)
+    {
+        LocalPoint localPoint = LocalPoint.fromWorld(worldView, worldX, worldY);
+        if (localPoint != null)
+        {
+            return localPoint;
+        }
+
+        WorldPoint worldPoint = new WorldPoint(worldX, worldY, plane);
+        for (WorldPoint instancePoint : WorldPoint.toLocalInstance(worldView, worldPoint))
+        {
+            if (instancePoint.getPlane() != plane)
+            {
+                continue;
+            }
+
+            localPoint = LocalPoint.fromWorld(worldView, instancePoint);
+            if (localPoint != null)
+            {
+                return localPoint;
+            }
+        }
+
+        return null;
     }
 
     private Point toCanvasPoint(WorldView worldView, int plane, double continuousX, double continuousY)
